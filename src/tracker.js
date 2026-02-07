@@ -2,7 +2,7 @@
  * Embedded tracker.js - client-side analytics snippet
  * Served as plain JavaScript from GET /tracker.js
  *
- * Project token is passed in the request body (like Mixpanel).
+ * Auth is handled server-side by validateWrite.
  * No custom headers = no CORS preflight = zero issues.
  */
 export const TRACKER_JS = `
@@ -15,7 +15,6 @@ export const TRACKER_JS = `
     : '/track';
   
   var PROJECT = (script && script.dataset.project) || 'default';
-  var TOKEN = (script && script.dataset.token) || null;
   
   // Simple fingerprint for anonymous users
   function getAnonId() {
@@ -30,12 +29,9 @@ export const TRACKER_JS = `
   var userId = getAnonId();
   
   var aa = {
-    token: TOKEN,
-    
     track: function(event, properties) {
       var payload = {
         project: PROJECT,
-        token: aa.token,
         event: event,
         properties: Object.assign({
           url: location.href,

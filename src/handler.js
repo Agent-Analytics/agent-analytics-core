@@ -26,13 +26,16 @@ function json(data, status = 200) {
  *
  * @param {Object} opts
  * @param {import('./db/adapter.js').DbAdapter} opts.db
- * @param {(request: Request, body: any) => { valid: boolean, error?: string }} [opts.validateWrite]
- * @param {(request: Request, url: URL) => { valid: boolean }} [opts.validateRead]
+ * @param {(request: Request, body: any) => { valid: boolean, error?: string }} opts.validateWrite — required
+ * @param {(request: Request, url: URL) => { valid: boolean }} opts.validateRead — required
  * @param {boolean} [opts.useQueue=false]
  * @param {Object} [opts.healthExtra={}]
  * @returns {(request: Request) => Promise<{ response: Response, writeOps?: Promise[], queueMessages?: any[] }>}
  */
 export function createAnalyticsHandler({ db, validateWrite, validateRead, useQueue = false, healthExtra = {} }) {
+  if (!validateWrite) throw new Error('validateWrite is required — provide an auth function for write endpoints');
+  if (!validateRead) throw new Error('validateRead is required — provide an auth function for read endpoints');
+
   return async function handleRequest(request) {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -90,7 +93,7 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
       return { response: json({ error: 'not found' }, 404) };
     } catch (err) {
       console.error('Error:', err);
-      return { response: json({ error: err.message }, 500) };
+      return { response: json({ error: 'internal error' }, 500) };
     }
   };
 }
@@ -99,17 +102,15 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
 
 async function handleTrack(request, db, validateWrite, useQueue) {
   const body = await request.json();
-  const { project, event, properties, user_id, timestamp, token } = body;
+  const { project, event, properties, user_id, timestamp } = body;
 
   if (!project || !event) {
     return { response: json({ error: 'project and event required' }, 400) };
   }
 
-  if (validateWrite) {
-    const auth = validateWrite(request, body);
-    if (!auth.valid) {
-      return { response: json({ error: auth.error || 'forbidden' }, 403) };
-    }
+  const auth = validateWrite(request, body);
+  if (!auth.valid) {
+    return { response: json({ error: auth.error || 'forbidden' }, 403) };
   }
 
   const eventData = { project, event, properties, user_id, timestamp: timestamp || Date.now() };
@@ -126,7 +127,7 @@ async function handleTrack(request, db, validateWrite, useQueue) {
 
 async function handleTrackBatch(request, db, validateWrite, useQueue) {
   const body = await request.json();
-  const { events, token } = body;
+  const { events } = body;
 
   if (!Array.isArray(events) || events.length === 0) {
     return { response: json({ error: 'events array required' }, 400) };
@@ -135,11 +136,9 @@ async function handleTrackBatch(request, db, validateWrite, useQueue) {
     return { response: json({ error: 'max 100 events per batch' }, 400) };
   }
 
-  if (validateWrite) {
-    const auth = validateWrite(request, body);
-    if (!auth.valid) {
-      return { response: json({ error: auth.error || 'forbidden' }, 403) };
-    }
+  const auth = validateWrite(request, body);
+  if (!auth.valid) {
+    return { response: json({ error: auth.error || 'forbidden' }, 403) };
   }
 
   const normalized = events.map(e => ({
@@ -161,11 +160,9 @@ async function handleTrackBatch(request, db, validateWrite, useQueue) {
 }
 
 async function handleStats(request, url, db, validateRead) {
-  if (validateRead) {
-    const auth = validateRead(request, url);
-    if (!auth.valid) {
-      return { response: json({ error: 'unauthorized - API key required' }, 401) };
-    }
+  const auth = validateRead(request, url);
+  if (!auth.valid) {
+    return { response: json({ error: 'unauthorized - API key required' }, 401) };
   }
 
   const project = url.searchParams.get('project');
@@ -178,11 +175,9 @@ async function handleStats(request, url, db, validateRead) {
 }
 
 async function handleEvents(request, url, db, validateRead) {
-  if (validateRead) {
-    const auth = validateRead(request, url);
-    if (!auth.valid) {
-      return { response: json({ error: 'unauthorized - API key required' }, 401) };
-    }
+  const auth = validateRead(request, url);
+  if (!auth.valid) {
+    return { response: json({ error: 'unauthorized - API key required' }, 401) };
   }
 
   const project = url.searchParams.get('project');
@@ -197,11 +192,9 @@ async function handleEvents(request, url, db, validateRead) {
 }
 
 async function handleQuery(request, url, db, validateRead) {
-  if (validateRead) {
-    const auth = validateRead(request, url);
-    if (!auth.valid) {
-      return { response: json({ error: 'unauthorized - API key required' }, 401) };
-    }
+  const auth = validateRead(request, url);
+  if (!auth.valid) {
+    return { response: json({ error: 'unauthorized - API key required' }, 401) };
   }
 
   const body = await request.json();
@@ -211,16 +204,15 @@ async function handleQuery(request, url, db, validateRead) {
     const result = await db.query(body);
     return { response: json({ project: body.project, ...result }) };
   } catch (err) {
-    return { response: json({ error: err.message }, 400) };
+    console.error('Query error:', err);
+    return { response: json({ error: 'query failed' }, 400) };
   }
 }
 
 async function handleProperties(request, url, db, validateRead) {
-  if (validateRead) {
-    const auth = validateRead(request, url);
-    if (!auth.valid) {
-      return { response: json({ error: 'unauthorized - API key required' }, 401) };
-    }
+  const auth = validateRead(request, url);
+  if (!auth.valid) {
+    return { response: json({ error: 'unauthorized - API key required' }, 401) };
   }
 
   const project = url.searchParams.get('project');
