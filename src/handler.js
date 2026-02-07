@@ -168,7 +168,7 @@ async function handleStats(request, url, db, validateRead) {
   const project = url.searchParams.get('project');
   if (!project) return { response: json({ error: 'project required' }, 400) };
 
-  const days = parseInt(url.searchParams.get('days') || '7');
+  const days = Math.min(Math.max(parseInt(url.searchParams.get('days')) || 7, 1), 365);
   const stats = await db.getStats({ project, days });
 
   return { response: json({ project, ...stats }) };
@@ -184,8 +184,8 @@ async function handleEvents(request, url, db, validateRead) {
   if (!project) return { response: json({ error: 'project required' }, 400) };
 
   const event = url.searchParams.get('event');
-  const days = parseInt(url.searchParams.get('days') || '7');
-  const limit = parseInt(url.searchParams.get('limit') || '100');
+  const days = Math.min(Math.max(parseInt(url.searchParams.get('days')) || 7, 1), 365);
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || 100, 1), 1000);
 
   const events = await db.getEvents({ project, event, days, limit });
   return { response: json({ project, events }) };
@@ -218,7 +218,7 @@ async function handleProperties(request, url, db, validateRead) {
   const project = url.searchParams.get('project');
   if (!project) return { response: json({ error: 'project required' }, 400) };
 
-  const days = parseInt(url.searchParams.get('days') || '30');
+  const days = Math.min(Math.max(parseInt(url.searchParams.get('days')) || 30, 1), 365);
   const result = await db.getProperties({ project, days });
 
   return { response: json({ project, ...result }) };
