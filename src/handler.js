@@ -102,7 +102,7 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
 
 async function handleTrack(request, db, validateWrite, useQueue) {
   const body = await request.json();
-  const { project, event, properties, user_id, timestamp } = body;
+  const { project, event, properties, user_id, session_id, timestamp } = body;
 
   if (!project || !event) {
     return { response: json({ error: 'project and event required' }, 400) };
@@ -113,7 +113,7 @@ async function handleTrack(request, db, validateWrite, useQueue) {
     return { response: json({ error: auth.error || 'forbidden' }, 403) };
   }
 
-  const eventData = { project, event, properties, user_id, timestamp: timestamp || Date.now() };
+  const eventData = { project, event, properties, user_id, session_id, timestamp: timestamp || Date.now() };
 
   if (useQueue) {
     return { response: json({ ok: true }), queueMessages: [eventData] };
@@ -146,6 +146,7 @@ async function handleTrackBatch(request, db, validateWrite, useQueue) {
     event: e.event,
     properties: e.properties,
     user_id: e.user_id,
+    session_id: e.session_id,
     timestamp: e.timestamp || Date.now(),
   }));
 

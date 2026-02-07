@@ -6,6 +6,7 @@
  */
 
 import { today, daysAgo } from './adapter.js';
+import { ulid } from '../ulid.js';
 
 export function validatePropertyKey(key) {
   if (!key || key.length > 128 || !/^[a-zA-Z0-9_]+$/.test(key)) {
@@ -22,17 +23,19 @@ export class D1Adapter {
   /**
    * Insert a single event. Returns a Promise (caller decides blocking vs waitUntil).
    */
-  trackEvent({ project, event, properties, user_id, timestamp }) {
+  trackEvent({ project, event, properties, user_id, session_id, timestamp }) {
     const ts = timestamp || Date.now();
     const date = new Date(ts).toISOString().split('T')[0];
     return this.db.prepare(
-      `INSERT INTO events (project_id, event, properties, user_id, timestamp, date)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO events (id, project_id, event, properties, user_id, session_id, timestamp, date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
+      ulid(),
       project,
       event,
       properties ? JSON.stringify(properties) : null,
       user_id || null,
+      session_id || null,
       ts,
       date
     ).run();
@@ -43,17 +46,19 @@ export class D1Adapter {
    */
   trackBatch(events) {
     const stmt = this.db.prepare(
-      `INSERT INTO events (project_id, event, properties, user_id, timestamp, date)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO events (id, project_id, event, properties, user_id, session_id, timestamp, date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const batch = events.map(e => {
       const ts = e.timestamp || Date.now();
       const date = new Date(ts).toISOString().split('T')[0];
       return stmt.bind(
+        ulid(),
         e.project,
         e.event,
         e.properties ? JSON.stringify(e.properties) : null,
         e.user_id || null,
+        e.session_id || null,
         ts,
         date
       );
