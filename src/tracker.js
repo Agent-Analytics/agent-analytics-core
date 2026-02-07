@@ -2,7 +2,7 @@
  * Embedded tracker.js - client-side analytics snippet
  * Served as plain JavaScript from GET /tracker.js
  *
- * Auth is handled server-side by validateWrite.
+ * Auth token is passed in the request body for server-side validation.
  * No custom headers = no CORS preflight = zero issues.
  */
 export const TRACKER_JS = `
@@ -15,6 +15,7 @@ export const TRACKER_JS = `
     : '/track';
   
   var PROJECT = (script && script.dataset.project) || 'default';
+  var TOKEN = (script && script.dataset.token) || null;
   
   // Simple fingerprint for anonymous users
   function getAnonId() {
@@ -32,6 +33,7 @@ export const TRACKER_JS = `
     track: function(event, properties) {
       var payload = {
         project: PROJECT,
+        token: TOKEN,
         event: event,
         properties: Object.assign({
           url: location.href,
