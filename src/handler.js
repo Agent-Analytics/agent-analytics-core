@@ -56,9 +56,19 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
         return await handleTrackBatch(request, db, validateWrite, useQueue);
       }
 
+      // GET /projects
+      if (path === '/projects' && request.method === 'GET') {
+        return await handleListProjects(request, url, db, validateRead);
+      }
+
       // GET /stats
       if (path === '/stats' && request.method === 'GET') {
         return await handleStats(request, url, db, validateRead);
+      }
+
+      // GET /sessions
+      if (path === '/sessions' && request.method === 'GET') {
+        return await handleSessions(request, url, db, validateRead);
       }
 
       // GET /events
@@ -160,6 +170,16 @@ async function handleTrackBatch(request, db, validateWrite, useQueue) {
   return { response: json({ ok: true, count: events.length }), writeOps: [writeOp] };
 }
 
+async function handleListProjects(request, url, db, validateRead) {
+  const auth = validateRead(request, url);
+  if (!auth.valid) {
+    return { response: json({ error: 'unauthorized - API key required' }, 401) };
+  }
+
+  const projects = await db.listProjects();
+  return { response: json({ projects }) };
+}
+
 async function handleStats(request, url, db, validateRead) {
   const auth = validateRead(request, url);
   if (!auth.valid) {
@@ -169,8 +189,9 @@ async function handleStats(request, url, db, validateRead) {
   const project = url.searchParams.get('project');
   if (!project) return { response: json({ error: 'project required' }, 400) };
 
-  const days = Math.min(Math.max(parseInt(url.searchParams.get('days')) || 7, 1), 365);
-  const stats = await db.getStats({ project, days });
+  const since = url.searchParams.get('since') || undefined;
+  const groupBy = url.searchParams.get('groupBy') || 'day';
+  const stats = await db.getStats({ project, since, groupBy });
 
   return { response: json({ project, ...stats }) };
 }
@@ -185,10 +206,11 @@ async function handleEvents(request, url, db, validateRead) {
   if (!project) return { response: json({ error: 'project required' }, 400) };
 
   const event = url.searchParams.get('event');
-  const days = Math.min(Math.max(parseInt(url.searchParams.get('days')) || 7, 1), 365);
+  const session_id = url.searchParams.get('session_id');
+  const since = url.searchParams.get('since') || undefined;
   const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || 100, 1), 1000);
 
-  const events = await db.getEvents({ project, event, days, limit });
+  const events = await db.getEvents({ project, event, session_id, since, limit });
   return { response: json({ project, events }) };
 }
 
@@ -210,6 +232,25 @@ async function handleQuery(request, url, db, validateRead) {
   }
 }
 
+async function handleSessions(request, url, db, validateRead) {
+  const auth = validateRead(request, url);
+  if (!auth.valid) {
+    return { response: json({ error: 'unauthorized - API key required' }, 401) };
+  }
+
+  const project = url.searchParams.get('project');
+  if (!project) return { response: json({ error: 'project required' }, 400) };
+
+  const since = url.searchParams.get('since') || undefined;
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || 100, 1), 1000);
+  const user_id = url.searchParams.get('user_id');
+  const is_bounce_raw = url.searchParams.get('is_bounce');
+  const is_bounce = is_bounce_raw !== null ? Number(is_bounce_raw) : undefined;
+
+  const sessions = await db.getSessions({ project, since, user_id, is_bounce, limit });
+  return { response: json({ project, sessions }) };
+}
+
 async function handleProperties(request, url, db, validateRead) {
   const auth = validateRead(request, url);
   if (!auth.valid) {
@@ -219,8 +260,8 @@ async function handleProperties(request, url, db, validateRead) {
   const project = url.searchParams.get('project');
   if (!project) return { response: json({ error: 'project required' }, 400) };
 
-  const days = Math.min(Math.max(parseInt(url.searchParams.get('days')) || 30, 1), 365);
-  const result = await db.getProperties({ project, days });
+  const since = url.searchParams.get('since') || undefined;
+  const result = await db.getProperties({ project, since });
 
   return { response: json({ project, ...result }) };
 }
