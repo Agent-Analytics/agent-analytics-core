@@ -81,6 +81,11 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
         return await handleQuery(request, url, db, validateRead);
       }
 
+      // GET /properties/received
+      if (path === '/properties/received' && request.method === 'GET') {
+        return await handlePropertiesReceived(request, url, db, validateRead);
+      }
+
       // GET /properties
       if (path === '/properties' && request.method === 'GET') {
         return await handleProperties(request, url, db, validateRead);
@@ -249,6 +254,22 @@ async function handleSessions(request, url, db, validateRead) {
 
   const sessions = await db.getSessions({ project, since, user_id, is_bounce, limit });
   return { response: json({ project, sessions }) };
+}
+
+async function handlePropertiesReceived(request, url, db, validateRead) {
+  const auth = validateRead(request, url);
+  if (!auth.valid) {
+    return { response: json({ error: 'unauthorized - API key required' }, 401) };
+  }
+
+  const project = url.searchParams.get('project');
+  if (!project) return { response: json({ error: 'project required' }, 400) };
+
+  const since = url.searchParams.get('since') || undefined;
+  const sample = parseInt(url.searchParams.get('sample')) || 5000;
+  const result = await db.getPropertiesReceived({ project, since, sample });
+
+  return { response: json({ project, ...result }) };
 }
 
 async function handleProperties(request, url, db, validateRead) {

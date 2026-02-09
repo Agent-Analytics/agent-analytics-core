@@ -414,4 +414,30 @@ export class D1Adapter {
       property_keys: [...propKeys].sort(),
     };
   }
+
+  /**
+   * Discover property keys mapped to their event types.
+   * Uses json_each on a bounded sample for predictable performance.
+   */
+  async getPropertiesReceived({ project, since, sample = 5000 }) {
+    const fromDate = parseSince(since);
+    const safeSample = Math.min(Math.max(sample, 100), 10000);
+
+    const result = await this.db.prepare(
+      `SELECT DISTINCT j.key as key, e.event
+       FROM (
+         SELECT event, properties
+         FROM events
+         WHERE project_id = ? AND date >= ? AND properties IS NOT NULL
+         ORDER BY timestamp DESC LIMIT ?
+       ) e, json_each(e.properties) j
+       ORDER BY j.key, e.event`
+    ).bind(project, fromDate, safeSample).all();
+
+    return {
+      sample_size: safeSample,
+      since: fromDate,
+      properties: result.results,
+    };
+  }
 }

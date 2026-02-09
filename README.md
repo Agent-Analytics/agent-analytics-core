@@ -133,6 +133,10 @@ curl -X POST "https://your-server.com/query" \
 # Discover event names and property keys
 curl "https://your-server.com/properties?project=my-site" \
   -H "X-API-Key: YOUR_KEY"
+
+# Discover which property keys are used by which events
+curl "https://your-server.com/properties/received?project=my-site" \
+  -H "X-API-Key: YOUR_KEY"
 ```
 
 ## API Reference
@@ -294,6 +298,31 @@ Response:
 }
 ```
 
+#### `GET /properties/received`
+
+Discover which property keys are used by which event types. Samples recent events for fast, bounded queries. Useful for AI agents to reuse consistent property naming.
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `project` | required | Project identifier |
+| `since` | 7 days ago | ISO timestamp or date string |
+| `sample` | 5000 | Max events to sample (100-10000) |
+
+Response:
+
+```json
+{
+  "project": "my-site",
+  "sample_size": 5000,
+  "since": "2025-01-24",
+  "properties": [
+    { "key": "path", "event": "page_view" },
+    { "key": "browser", "event": "page_view" },
+    { "key": "plan", "event": "signup" }
+  ]
+}
+```
+
 #### `GET /projects`
 
 List all projects (derived from events data).
@@ -366,6 +395,7 @@ All adapters must implement these methods:
 | `getEvents` | `({ project, event?, session_id?, since?, limit? }) => Promise` | Raw event query |
 | `query` | `({ project, metrics?, filters?, date_from?, date_to?, group_by?, order_by?, order?, limit? }) => Promise` | Flexible analytics query |
 | `getProperties` | `({ project, since? }) => Promise` | Discover event names and property keys |
+| `getPropertiesReceived` | `({ project, since?, sample? }) => Promise` | Property keys mapped to event types |
 | `listProjects` | `() => Promise` | List all projects |
 | `getSessions` | `({ project, since?, user_id?, is_bounce?, limit? }) => Promise` | List sessions with filters |
 | `getSessionStats` | `({ project, since? }) => Promise` | Aggregate session metrics |
