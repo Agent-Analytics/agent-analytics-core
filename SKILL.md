@@ -20,6 +20,16 @@ Add before `</body>`:
 
 This auto-tracks `page_view` events with path, referrer, browser, OS, device, screen size, and UTM params. You do NOT need to add custom page_view events.
 
+## Step 1b: Discover existing events and properties (existing projects)
+
+If tracking is already set up for this project, check what events and property keys are already being used so you reuse the same naming conventions:
+
+```bash
+npx agent-analytics properties-received PROJECT_NAME
+```
+
+This shows which property keys each event type uses (e.g. `cta_click → id`, `signup → method`). Match the existing naming before adding new events.
+
 ## Step 2: Add custom events to important actions
 
 Use `onclick` handlers on the elements that matter. Pattern:
