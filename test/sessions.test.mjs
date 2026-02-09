@@ -181,7 +181,8 @@ class MockD1 {
 
     // project_id filter
     if (/project_id = \?/i.test(sql)) {
-      rows = rows.filter(r => r.project_id === params[paramIdx++]);
+      const val = params[paramIdx++];
+      rows = rows.filter(r => r.project_id === val);
     }
     // date filter
     if (/date >= \?/i.test(sql)) {
@@ -194,7 +195,8 @@ class MockD1 {
     }
     // event filter
     if (/AND event = \?/i.test(sql)) {
-      rows = rows.filter(r => r.event === params[paramIdx++]);
+      const val = params[paramIdx++];
+      rows = rows.filter(r => r.event === val);
     }
     // session_id filter
     if (/AND session_id = \?/i.test(sql)) {
