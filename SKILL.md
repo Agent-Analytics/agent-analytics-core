@@ -1,3 +1,8 @@
+---
+name: analytics-tracking
+description: Add lightweight, privacy-friendly analytics tracking to any website. Use when the user wants to track page views, custom events, or monitor if a project is alive and growing.
+---
+
 # Agent Analytics — Add tracking to any website
 
 You are adding analytics tracking to a website using Agent Analytics. This is a lightweight analytics platform built for developers who ship lots of projects and want their AI agent to monitor them.
