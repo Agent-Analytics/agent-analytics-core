@@ -1,17 +1,43 @@
 ---
-name: analytics-tracking
-description: Add lightweight, privacy-friendly analytics tracking to any website. Use when the user wants to track page views, custom events, or monitor if a project is alive and growing.
+name: agent-analytics
+description: Add lightweight, privacy-friendly analytics tracking to any website. Track page views and custom events, then query the data via CLI or API. Use when the user wants to know if a project is alive and growing.
+version: 1.0.0
+author: dannyshmueli
+repository: https://github.com/Agent-Analytics/agent-analytics-core
+tags:
+  - analytics
+  - tracking
+  - web
+  - events
 ---
 
 # Agent Analytics — Add tracking to any website
 
-You are adding analytics tracking to a website using Agent Analytics. This is a lightweight analytics platform built for developers who ship lots of projects and want their AI agent to monitor them.
+You are adding analytics tracking using Agent Analytics — a lightweight platform built for developers who ship lots of projects and want their AI agent to monitor them.
 
 ## Philosophy
 
 You are NOT Mixpanel. Don't track everything. Track only what answers: **"Is this project alive and growing?"**
 
 For a typical site, that's 3-5 custom events max on top of automatic page views.
+
+## First-time setup
+
+If the project doesn't have tracking yet:
+
+```bash
+# 1. Login (one time — uses your API key)
+npx agent-analytics login --token aak_YOUR_API_KEY
+
+# 2. Create the project (returns a project write token)
+npx agent-analytics init my-site --domain https://mysite.com
+
+# 3. Add the snippet (Step 1 below) using the returned token
+# 4. Deploy, click around, verify:
+npx agent-analytics events my-site
+```
+
+The `init` command returns a **project write token** — use it as `data-token` in the snippet below. This is separate from your API key (which is for reading/querying).
 
 ## Step 1: Add the tracking snippet
 
@@ -20,34 +46,34 @@ Add before `</body>`:
 ```html
 <script src="https://api.agentanalytics.sh/tracker.js"
   data-project="PROJECT_NAME"
-  data-token="PROJECT_TOKEN"></script>
+  data-token="PROJECT_WRITE_TOKEN"></script>
 ```
 
 This auto-tracks `page_view` events with path, referrer, browser, OS, device, screen size, and UTM params. You do NOT need to add custom page_view events.
 
-## Step 1b: Discover existing events and properties (existing projects)
+## Step 1b: Discover existing events (existing projects)
 
-If tracking is already set up for this project, check what events and property keys are already being used so you reuse the same naming conventions:
+If tracking is already set up, check what events and property keys are already in use so you match the naming:
 
 ```bash
 npx agent-analytics properties-received PROJECT_NAME
 ```
 
-This shows which property keys each event type uses (e.g. `cta_click → id`, `signup → method`). Match the existing naming before adding new events.
+This shows which property keys each event type uses (e.g. `cta_click → id`, `signup → method`). Match existing naming before adding new events.
 
 ## Step 2: Add custom events to important actions
 
-Use `onclick` handlers on the elements that matter. Pattern:
+Use `onclick` handlers on the elements that matter:
 
 ```html
 <a href="..." onclick="window.aa?.track('EVENT_NAME', {id: 'ELEMENT_ID'})">
 ```
 
-The `?.` operator ensures it doesn't error if the tracker hasn't loaded yet (edge case — all user-initiated clicks happen after load).
+The `?.` operator ensures no error if the tracker hasn't loaded yet.
 
-## Standard events for 80% of SaaS sites
+### Standard events for 80% of SaaS sites
 
-Pick the ones that apply. Most sites need 2-4 of these:
+Pick the ones that apply. Most sites need 2-4:
 
 | Event | When to fire | Properties |
 |-------|-------------|------------|
@@ -71,9 +97,8 @@ Only buttons that indicate conversion intent:
 - Scroll depth (not actionable)
 - Form field interactions (too granular)
 - Footer links (low signal)
-- Social sharing buttons (vanity metric)
 
-## Property naming rules
+### Property naming rules
 
 - Use `snake_case`: `hero_get_started` not `heroGetStarted`
 - The `id` property identifies WHICH element: short, descriptive
@@ -85,16 +110,44 @@ Only buttons that indicate conversion intent:
 After adding tracking, verify it works:
 
 ```bash
-# Option A: Open browser console on your site and run:
+# Option A: Browser console on your site:
 window.aa.track('test_event', {source: 'manual_test'})
 
-# Option B: Click around your site, then check:
+# Option B: Click around, then check:
 npx agent-analytics events PROJECT_NAME
 
-# You should see your events within seconds.
+# Events appear within seconds.
 ```
 
-## Example: Landing page with pricing
+## Querying the data
+
+Your AI agent checks on projects:
+
+```bash
+# How's the project doing?
+npx agent-analytics stats my-site --days 7
+
+# What events are coming in?
+npx agent-analytics events my-site
+
+# What property keys exist per event type?
+npx agent-analytics properties-received my-site
+
+# Direct API (for agents without npx):
+curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \
+  -H "X-API-Key: $AGENT_ANALYTICS_KEY"
+```
+
+## What this skill does NOT do
+
+- No dashboards — your agent IS the dashboard
+- No user management or billing
+- No complex funnels or cohort analysis
+- No PII collection — privacy-first by design
+
+## Examples
+
+### Landing page with pricing
 
 ```html
 <!-- Hero CTAs -->
@@ -112,21 +165,13 @@ npx agent-analytics events PROJECT_NAME
 <a href="/signup?plan=pro" onclick="window.aa?.track('cta_click',{id:'pricing_pro'})">
   Get Started →
 </a>
-
-<!-- Nav -->
-<a href="/dashboard" onclick="window.aa?.track('cta_click',{id:'nav_dashboard'})">
-  Dashboard
-</a>
 ```
 
-## Example: SaaS app with auth
+### SaaS app with auth
 
 ```js
 // After successful signup
 window.aa?.track('signup', {method: 'github'});
-
-// After login
-window.aa?.track('login', {method: 'google'});
 
 // When user does the main thing your app does
 window.aa?.track('feature_used', {feature: 'create_project'});
@@ -136,38 +181,4 @@ window.aa?.track('checkout', {plan: 'pro'});
 
 // In error handler
 window.aa?.track('error', {message: err.message, page: location.pathname});
-```
-
-## Querying the data
-
-Your AI agent checks on your projects:
-
-```bash
-# Daily check: how's the project doing?
-npx agent-analytics stats my-site --days 7
-
-# What events are coming in?
-npx agent-analytics events my-site
-
-# What property keys exist for each event type?
-npx agent-analytics properties-received my-site
-
-# Direct API (for agents without npx):
-curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \
-  -H "X-API-Key: $AGENT_ANALYTICS_KEY"
-```
-
-## First-time setup (if the project doesn't exist yet)
-
-```bash
-# 1. Login (one time)
-npx agent-analytics login --token aak_YOUR_API_KEY
-
-# 2. Create the project
-npx agent-analytics init my-site --domain https://mysite.com
-
-# 3. Add the snippet from step 1 to your site
-
-# 4. Deploy your site, click around, then verify:
-npx agent-analytics events my-site
 ```
