@@ -1,6 +1,6 @@
 ---
 name: agent-analytics
-description: Add lightweight, privacy-friendly analytics tracking to any website. Track page views and custom events, then query the data via CLI or API. Use when the user wants to know if a project is alive and growing.
+description: Web analytics your AI agent can read. Drop a script tag on any site, then just ask "how's my site doing?" — no dashboards, no logins. One account for all your projects. Use when adding analytics to a site, checking traffic/events, or when the user wants to ask their agent instead of opening a dashboard.
 version: 1.0.0
 author: dannyshmueli
 repository: https://github.com/Agent-Analytics/agent-analytics-core
@@ -11,15 +11,15 @@ tags:
   - events
 ---
 
-# Agent Analytics — Add tracking to any website
+# Agent Analytics — Analytics your AI agent can actually read
 
-You are adding analytics tracking using Agent Analytics — a lightweight platform built for developers who ship lots of projects and want their AI agent to monitor them.
+You are setting up analytics that the agent queries directly — no dashboards, no logins. One script tag per site, one API key for all projects. The user asks "how's my site doing?" and you answer with real data.
 
 ## Philosophy
 
 You are NOT Mixpanel. Don't track everything. Track only what answers: **"Is this project alive and growing?"**
 
-For a typical site, that's 3-5 custom events max on top of automatic page views.
+For a typical site, that's 3-5 custom events max on top of automatic page views. The magic isn't in collecting data — it's that YOU (the agent) can query it and report back instantly.
 
 ## First-time setup
 
@@ -119,9 +119,9 @@ npx agent-analytics events PROJECT_NAME
 # Events appear within seconds.
 ```
 
-## Querying the data
+## Querying the data (the whole point)
 
-Your AI agent checks on projects:
+This is why Agent Analytics exists — you query it, not a human in a dashboard:
 
 ```bash
 # How's the project doing?
@@ -141,9 +141,9 @@ curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \
 ## What this skill does NOT do
 
 - No dashboards — your agent IS the dashboard
-- No user management or billing
 - No complex funnels or cohort analysis
-- No PII collection — privacy-first by design
+- No PII collection — no cookies, no IP addresses, privacy-first by design
+- No per-project accounts — one API key covers everything
 
 ## Examples
 
