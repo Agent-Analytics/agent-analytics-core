@@ -6,6 +6,7 @@
  */
 
 import { TRACKER_JS } from './tracker.js';
+import { isBot } from './bot.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -116,6 +117,11 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
 // --- Individual handlers ---
 
 async function handleTrack(request, db, validateWrite, useQueue) {
+  const ua = request.headers.get('User-Agent');
+  if (isBot(ua)) {
+    return { response: json({ ok: true }) };
+  }
+
   const body = await request.json();
   const { project, event, properties, user_id, session_id, timestamp } = body;
 
@@ -141,6 +147,11 @@ async function handleTrack(request, db, validateWrite, useQueue) {
 }
 
 async function handleTrackBatch(request, db, validateWrite, useQueue) {
+  const ua = request.headers.get('User-Agent');
+  if (isBot(ua)) {
+    return { response: json({ ok: true }) };
+  }
+
   const body = await request.json();
   const { events } = body;
 
