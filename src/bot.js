@@ -2,8 +2,8 @@
  * Bot detection for analytics filtering.
  *
  * Returns true for known bots, crawlers, and headless browsers.
- * Conservative: only matches clearly-identified bots, NOT generic HTTP
- * libraries (node-fetch, undici, axios) since the CLI uses those.
+ * Conservative: only matches clearly-identified bots, plus Node.js HTTP
+ * clients (real browsers never send these User-Agents).
  */
 
 const BOT_PATTERN = new RegExp(
@@ -34,9 +34,10 @@ const BOT_PATTERN = new RegExp(
     'lighthouse', 'pagespeed', 'uptimerobot', 'pingdom',
     'datadog', 'site24x7', 'statuscake',
 
-    // Scripting tools
+    // Scripting tools & Node.js HTTP clients
     'curl/', 'wget/', 'libwww-perl', 'python-requests',
     'scrapy', 'go-http-client', 'httpie/',
+    'node-fetch', 'undici', 'axios/', 'got/', 'node/', 'deno/', 'bun/',
 
     // Generic patterns (word-boundary safe to avoid e.g. "Cubot")
     'crawl[er/]', 'spider[/\\s;,)-]', 'scrape[r/]',

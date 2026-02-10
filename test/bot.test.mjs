@@ -150,15 +150,17 @@ test('Cubot phone is NOT a bot', () => {
   assert.ok(!isBot(cubot), 'Cubot phone should not be detected as bot');
 });
 
-test('Node.js default UA is NOT a bot', () => {
-  // Node.js fetch sends "node" or "undici" as UA — must not block CLI usage
+test('detects Node.js HTTP clients', () => {
   const nodeUAs = [
-    'node',
-    'undici',
-    'node-fetch/1.0 (+https://github.com/bitinn/node-fetch)',
+    'node-fetch/3.0 (+https://github.com/node-fetch/node-fetch)',
+    'undici/6.0.0',
     'axios/1.6.2',
+    'got/14.0.0',
+    'node/20.11.0',
+    'deno/1.38.0',
+    'bun/1.0.0',
   ];
   for (const ua of nodeUAs) {
-    assert.ok(!isBot(ua), `should allow CLI UA: ${ua}`);
+    assert.ok(isBot(ua), `should detect Node.js client: ${ua}`);
   }
 });
