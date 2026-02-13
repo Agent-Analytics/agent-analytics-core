@@ -7,10 +7,11 @@
 
 import { today, parseSince, parseSinceMs } from './adapter.js';
 import { ulid } from '../ulid.js';
+import { AnalyticsError, ERROR_CODES } from '../errors.js';
 
 export function validatePropertyKey(key) {
   if (!key || key.length > 128 || !/^[a-zA-Z0-9_]+$/.test(key)) {
-    throw new Error('Invalid property filter key');
+    throw new AnalyticsError(ERROR_CODES.INVALID_PROPERTY_KEY, 'Invalid property filter key', 400);
   }
 }
 
@@ -295,10 +296,10 @@ export class D1Adapter {
     const ALLOWED_GROUP_BY = ['event', 'date', 'user_id', 'session_id'];
 
     for (const m of metrics) {
-      if (!ALLOWED_METRICS.includes(m)) throw new Error(`invalid metric: ${m}. allowed: ${ALLOWED_METRICS.join(', ')}`);
+      if (!ALLOWED_METRICS.includes(m)) throw new AnalyticsError(ERROR_CODES.INVALID_METRIC, `invalid metric: ${m}. allowed: ${ALLOWED_METRICS.join(', ')}`, 400);
     }
     for (const g of group_by) {
-      if (!ALLOWED_GROUP_BY.includes(g)) throw new Error(`invalid group_by: ${g}. allowed: ${ALLOWED_GROUP_BY.join(', ')}`);
+      if (!ALLOWED_GROUP_BY.includes(g)) throw new AnalyticsError(ERROR_CODES.INVALID_GROUP_BY, `invalid group_by: ${g}. allowed: ${ALLOWED_GROUP_BY.join(', ')}`, 400);
     }
 
     // SELECT
@@ -326,7 +327,7 @@ export class D1Adapter {
       for (const f of filters) {
         if (!f.field || !f.op || f.value === undefined) continue;
         const sqlOp = FILTER_OPS[f.op];
-        if (!sqlOp) throw new Error(`invalid filter op: ${f.op}. allowed: ${Object.keys(FILTER_OPS).join(', ')}`);
+        if (!sqlOp) throw new AnalyticsError(ERROR_CODES.INVALID_FILTER_OP, `invalid filter op: ${f.op}. allowed: ${Object.keys(FILTER_OPS).join(', ')}`, 400);
 
         if (FILTERABLE_FIELDS.includes(f.field)) {
           whereParts.push(`${f.field} ${sqlOp} ?`);

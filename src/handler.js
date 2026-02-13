@@ -7,6 +7,7 @@
 
 import { TRACKER_JS } from './tracker.js';
 import { isBot } from './bot.js';
+import { AnalyticsError, ERROR_CODES, errorResponse } from './errors.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -26,7 +27,7 @@ function withReadAuth(fn) {
   return async (ctx) => {
     const auth = ctx.validateRead(ctx.request, ctx.url);
     if (!auth.valid) {
-      return { response: json({ error: 'unauthorized - API key required' }, 401) };
+      return { response: json(errorResponse(ERROR_CODES.AUTH_REQUIRED, 'API key required'), 401) };
     }
     return fn(ctx);
   };
@@ -35,7 +36,7 @@ function withReadAuth(fn) {
 function withProjectRead(fn) {
   return withReadAuth(async (ctx) => {
     const project = ctx.url.searchParams.get('project');
-    if (!project) return { response: json({ error: 'project required' }, 400) };
+    if (!project) return { response: json(errorResponse(ERROR_CODES.PROJECT_REQUIRED, 'project query parameter required'), 400) };
     return fn({ ...ctx, project });
   });
 }
@@ -91,10 +92,13 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
       const handler = ROUTES[`${request.method} ${path}`];
       if (handler) return await handler({ request, url, db, validateWrite, validateRead, useQueue });
 
-      return { response: json({ error: 'not found' }, 404) };
+      return { response: json(errorResponse(ERROR_CODES.NOT_FOUND, 'not found'), 404) };
     } catch (err) {
+      if (err instanceof AnalyticsError) {
+        return { response: json(errorResponse(err.code, err.message), err.status) };
+      }
       console.error('Error:', err);
-      return { response: json({ error: 'internal error' }, 500) };
+      return { response: json(errorResponse(ERROR_CODES.INTERNAL_ERROR, 'internal error'), 500) };
     }
   };
 }
@@ -111,12 +115,12 @@ async function handleTrack({ request, db, validateWrite, useQueue }) {
   const { project, event, properties, user_id, session_id, timestamp } = body;
 
   if (!project || !event) {
-    return { response: json({ error: 'project and event required' }, 400) };
+    return { response: json(errorResponse(ERROR_CODES.MISSING_FIELDS, 'project and event required'), 400) };
   }
 
   const auth = validateWrite(request, body);
   if (!auth.valid) {
-    return { response: json({ error: auth.error || 'forbidden' }, 403) };
+    return { response: json(errorResponse(ERROR_CODES.FORBIDDEN, auth.error || 'forbidden'), 403) };
   }
 
   const eventData = { project, event, properties, user_id, session_id, timestamp: timestamp || Date.now() };
@@ -141,15 +145,15 @@ async function handleTrackBatch({ request, db, validateWrite, useQueue }) {
   const { events } = body;
 
   if (!Array.isArray(events) || events.length === 0) {
-    return { response: json({ error: 'events array required' }, 400) };
+    return { response: json(errorResponse(ERROR_CODES.INVALID_BODY, 'events array required'), 400) };
   }
   if (events.length > 100) {
-    return { response: json({ error: 'max 100 events per batch' }, 400) };
+    return { response: json(errorResponse(ERROR_CODES.BATCH_TOO_LARGE, 'max 100 events per batch'), 400) };
   }
 
   const auth = validateWrite(request, body);
   if (!auth.valid) {
-    return { response: json({ error: auth.error || 'forbidden' }, 403) };
+    return { response: json(errorResponse(ERROR_CODES.FORBIDDEN, auth.error || 'forbidden'), 403) };
   }
 
   const normalized = events.map(e => ({
@@ -196,14 +200,15 @@ async function handleEvents({ url, db, project }) {
 
 async function handleQuery({ request, db }) {
   const body = await request.json();
-  if (!body.project) return { response: json({ error: 'project required' }, 400) };
+  if (!body.project) return { response: json(errorResponse(ERROR_CODES.PROJECT_REQUIRED, 'project required'), 400) };
 
   try {
     const result = await db.query(body);
     return { response: json({ project: body.project, ...result }) };
   } catch (err) {
+    if (err instanceof AnalyticsError) throw err;
     console.error('Query error:', err);
-    return { response: json({ error: 'query failed' }, 400) };
+    return { response: json(errorResponse(ERROR_CODES.QUERY_FAILED, 'query failed'), 400) };
   }
 }
 
