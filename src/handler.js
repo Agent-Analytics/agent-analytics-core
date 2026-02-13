@@ -22,16 +22,34 @@ function json(data, status = 200) {
   });
 }
 
+function withReadAuth(fn) {
+  return async (ctx) => {
+    const auth = ctx.validateRead(ctx.request, ctx.url);
+    if (!auth.valid) {
+      return { response: json({ error: 'unauthorized - API key required' }, 401) };
+    }
+    return fn(ctx);
+  };
+}
+
+function withProjectRead(fn) {
+  return withReadAuth(async (ctx) => {
+    const project = ctx.url.searchParams.get('project');
+    if (!project) return { response: json({ error: 'project required' }, 400) };
+    return fn({ ...ctx, project });
+  });
+}
+
 const ROUTES = {
   'POST /track':              handleTrack,
   'POST /track/batch':        handleTrackBatch,
-  'GET /projects':            handleListProjects,
-  'GET /stats':               handleStats,
-  'GET /sessions':            handleSessions,
-  'GET /events':              handleEvents,
-  'POST /query':              handleQuery,
-  'GET /properties/received': handlePropertiesReceived,
-  'GET /properties':          handleProperties,
+  'GET /projects':            withReadAuth(handleListProjects),
+  'GET /stats':               withProjectRead(handleStats),
+  'GET /sessions':            withProjectRead(handleSessions),
+  'GET /events':              withProjectRead(handleEvents),
+  'POST /query':              withReadAuth(handleQuery),
+  'GET /properties/received': withProjectRead(handlePropertiesReceived),
+  'GET /properties':          withProjectRead(handleProperties),
 };
 
 /**
@@ -153,25 +171,12 @@ async function handleTrackBatch({ request, db, validateWrite, useQueue }) {
   return { response: json({ ok: true, count: events.length }), writeOps: [writeOp] };
 }
 
-async function handleListProjects({ request, url, db, validateRead }) {
-  const auth = validateRead(request, url);
-  if (!auth.valid) {
-    return { response: json({ error: 'unauthorized - API key required' }, 401) };
-  }
-
+async function handleListProjects({ db }) {
   const projects = await db.listProjects();
   return { response: json({ projects }) };
 }
 
-async function handleStats({ request, url, db, validateRead }) {
-  const auth = validateRead(request, url);
-  if (!auth.valid) {
-    return { response: json({ error: 'unauthorized - API key required' }, 401) };
-  }
-
-  const project = url.searchParams.get('project');
-  if (!project) return { response: json({ error: 'project required' }, 400) };
-
+async function handleStats({ url, db, project }) {
   const since = url.searchParams.get('since') || undefined;
   const groupBy = url.searchParams.get('groupBy') || 'day';
   const stats = await db.getStats({ project, since, groupBy });
@@ -179,15 +184,7 @@ async function handleStats({ request, url, db, validateRead }) {
   return { response: json({ project, ...stats }) };
 }
 
-async function handleEvents({ request, url, db, validateRead }) {
-  const auth = validateRead(request, url);
-  if (!auth.valid) {
-    return { response: json({ error: 'unauthorized - API key required' }, 401) };
-  }
-
-  const project = url.searchParams.get('project');
-  if (!project) return { response: json({ error: 'project required' }, 400) };
-
+async function handleEvents({ url, db, project }) {
   const event = url.searchParams.get('event');
   const session_id = url.searchParams.get('session_id');
   const since = url.searchParams.get('since') || undefined;
@@ -197,12 +194,7 @@ async function handleEvents({ request, url, db, validateRead }) {
   return { response: json({ project, events }) };
 }
 
-async function handleQuery({ request, url, db, validateRead }) {
-  const auth = validateRead(request, url);
-  if (!auth.valid) {
-    return { response: json({ error: 'unauthorized - API key required' }, 401) };
-  }
-
+async function handleQuery({ request, db }) {
   const body = await request.json();
   if (!body.project) return { response: json({ error: 'project required' }, 400) };
 
@@ -215,15 +207,7 @@ async function handleQuery({ request, url, db, validateRead }) {
   }
 }
 
-async function handleSessions({ request, url, db, validateRead }) {
-  const auth = validateRead(request, url);
-  if (!auth.valid) {
-    return { response: json({ error: 'unauthorized - API key required' }, 401) };
-  }
-
-  const project = url.searchParams.get('project');
-  if (!project) return { response: json({ error: 'project required' }, 400) };
-
+async function handleSessions({ url, db, project }) {
   const since = url.searchParams.get('since') || undefined;
   const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || 100, 1), 1000);
   const user_id = url.searchParams.get('user_id');
@@ -234,15 +218,7 @@ async function handleSessions({ request, url, db, validateRead }) {
   return { response: json({ project, sessions }) };
 }
 
-async function handlePropertiesReceived({ request, url, db, validateRead }) {
-  const auth = validateRead(request, url);
-  if (!auth.valid) {
-    return { response: json({ error: 'unauthorized - API key required' }, 401) };
-  }
-
-  const project = url.searchParams.get('project');
-  if (!project) return { response: json({ error: 'project required' }, 400) };
-
+async function handlePropertiesReceived({ url, db, project }) {
   const since = url.searchParams.get('since') || undefined;
   const sample = parseInt(url.searchParams.get('sample')) || 5000;
   const result = await db.getPropertiesReceived({ project, since, sample });
@@ -250,15 +226,7 @@ async function handlePropertiesReceived({ request, url, db, validateRead }) {
   return { response: json({ project, ...result }) };
 }
 
-async function handleProperties({ request, url, db, validateRead }) {
-  const auth = validateRead(request, url);
-  if (!auth.valid) {
-    return { response: json({ error: 'unauthorized - API key required' }, 401) };
-  }
-
-  const project = url.searchParams.get('project');
-  if (!project) return { response: json({ error: 'project required' }, 400) };
-
+async function handleProperties({ url, db, project }) {
   const since = url.searchParams.get('since') || undefined;
   const result = await db.getProperties({ project, since });
 
