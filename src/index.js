@@ -1,5 +1,6 @@
 export { createAnalyticsHandler } from './handler.js'
-export { D1Adapter, validatePropertyKey } from './db/d1.js'
+export { BaseAdapter, validatePropertyKey } from './db/base-adapter.js'
+export { D1Adapter } from './db/d1.js'
 export { today, daysAgo, parseSince, parseSinceMs } from './db/adapter.js'
 export { TRACKER_JS } from './tracker.js'
 export { isBot } from './bot.js'
