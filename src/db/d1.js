@@ -5,7 +5,7 @@
  * All SQL queries live here — handlers never touch SQL directly.
  */
 
-import { today, daysAgo, parseSince, parseSinceMs } from './adapter.js';
+import { today, parseSince, parseSinceMs } from './adapter.js';
 import { ulid } from '../ulid.js';
 
 export function validatePropertyKey(key) {
@@ -207,21 +207,17 @@ export class D1Adapter {
     if (!VALID_GROUP.includes(groupBy)) groupBy = 'day';
 
     // Build the time bucket expression
-    let bucketExpr, bucketLabel;
+    let bucketExpr;
     if (groupBy === 'hour') {
       // Use timestamp (epoch ms) for hourly — gives YYYY-MM-DDTHH:00
       bucketExpr = `strftime('%Y-%m-%dT%H:00', timestamp / 1000, 'unixepoch')`;
-      bucketLabel = 'hour';
     } else if (groupBy === 'week') {
       // ISO week start (Monday)
       bucketExpr = `date(date, 'weekday 0', '-6 days')`;
-      bucketLabel = 'week';
     } else if (groupBy === 'month') {
       bucketExpr = `strftime('%Y-%m', date)`;
-      bucketLabel = 'month';
     } else {
       bucketExpr = `date`;
-      bucketLabel = 'date';
     }
 
     const timeSeriesQuery = groupBy === 'hour'
@@ -406,7 +402,7 @@ export class D1Adapter {
       try {
         const props = JSON.parse(row.properties);
         Object.keys(props).forEach(k => propKeys.add(k));
-      } catch (e) { /* skip malformed JSON */ }
+      } catch { /* skip malformed JSON */ }
     }
 
     return {

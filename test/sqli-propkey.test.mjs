@@ -6,7 +6,7 @@ let validatePropertyKey;
 try {
   const mod = await import('../src/db/d1.js');
   validatePropertyKey = mod.validatePropertyKey;
-} catch (e) {
+} catch {
   // Before fix, function won't exist
   validatePropertyKey = null;
 }

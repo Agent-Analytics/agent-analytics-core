@@ -426,10 +426,10 @@ describe('Session tracking - D1Adapter', () => {
 });
 
 describe('Session tracking - Handler endpoints', () => {
-  let handler, adapter, mock;
+  let handler, adapter;
 
   beforeEach(() => {
-    ({ adapter, mock } = makeAdapter());
+    ({ adapter } = makeAdapter());
     handler = makeHandler(adapter);
   });
 

@@ -49,13 +49,13 @@
   function detect(ua) {
     var b = 'Unknown', bv = '', os = 'Unknown';
     var m;
-    if (m = ua.match(/(Edge|Edg)\/([\d.]+)/)) { b = 'Edge'; bv = m[2]; }
-    else if (m = ua.match(/OPR\/([\d.]+)/)) { b = 'Opera'; bv = m[1]; }
-    else if (m = ua.match(/Chrome\/([\d.]+)/)) { b = 'Chrome'; bv = m[1]; }
-    else if (m = ua.match(/Safari\/([\d.]+)/) ) {
-      if (m = ua.match(/Version\/([\d.]+)/)) { b = 'Safari'; bv = m[1]; }
+    if ((m = ua.match(/(Edge|Edg)\/([\d.]+)/))) { b = 'Edge'; bv = m[2]; }
+    else if ((m = ua.match(/OPR\/([\d.]+)/))) { b = 'Opera'; bv = m[1]; }
+    else if ((m = ua.match(/Chrome\/([\d.]+)/))) { b = 'Chrome'; bv = m[1]; }
+    else if ((m = ua.match(/Safari\/([\d.]+)/))) {
+      if ((m = ua.match(/Version\/([\d.]+)/))) { b = 'Safari'; bv = m[1]; }
     }
-    else if (m = ua.match(/Firefox\/([\d.]+)/)) { b = 'Firefox'; bv = m[1]; }
+    else if ((m = ua.match(/Firefox\/([\d.]+)/))) { b = 'Firefox'; bv = m[1]; }
 
     if (/iPhone|iPad|iPod/.test(ua)) os = 'iOS';
     else if (/Windows/.test(ua)) os = 'Windows';

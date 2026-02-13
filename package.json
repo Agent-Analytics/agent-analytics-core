@@ -5,6 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "build": "node scripts/build-tracker.mjs",
+    "lint": "eslint .",
     "test": "node --test test/*.test.mjs"
   },
   "exports": {
@@ -12,6 +13,9 @@
     "./ulid": "./src/ulid.js"
   },
   "devDependencies": {
-    "esbuild": "^0.27.3"
+    "@eslint/js": "^9.39.1",
+    "esbuild": "^0.27.3",
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0"
   }
 }
