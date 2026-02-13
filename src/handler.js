@@ -22,6 +22,18 @@ function json(data, status = 200) {
   });
 }
 
+const ROUTES = {
+  'POST /track':              handleTrack,
+  'POST /track/batch':        handleTrackBatch,
+  'GET /projects':            handleListProjects,
+  'GET /stats':               handleStats,
+  'GET /sessions':            handleSessions,
+  'GET /events':              handleEvents,
+  'POST /query':              handleQuery,
+  'GET /properties/received': handlePropertiesReceived,
+  'GET /properties':          handleProperties,
+};
+
 /**
  * Create an analytics request handler.
  *
@@ -41,70 +53,25 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // CORS preflight
     if (request.method === 'OPTIONS') {
       return { response: new Response(null, { headers: CORS_HEADERS }) };
     }
 
+    if (path === '/health') {
+      return { response: json({ status: 'ok', service: 'agent-analytics', ...healthExtra }) };
+    }
+
+    if (path === '/tracker.js') {
+      return {
+        response: new Response(TRACKER_JS, {
+          headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=3600', ...CORS_HEADERS },
+        }),
+      };
+    }
+
     try {
-      // POST /track
-      if (path === '/track' && request.method === 'POST') {
-        return await handleTrack(request, db, validateWrite, useQueue);
-      }
-
-      // POST /track/batch
-      if (path === '/track/batch' && request.method === 'POST') {
-        return await handleTrackBatch(request, db, validateWrite, useQueue);
-      }
-
-      // GET /projects
-      if (path === '/projects' && request.method === 'GET') {
-        return await handleListProjects(request, url, db, validateRead);
-      }
-
-      // GET /stats
-      if (path === '/stats' && request.method === 'GET') {
-        return await handleStats(request, url, db, validateRead);
-      }
-
-      // GET /sessions
-      if (path === '/sessions' && request.method === 'GET') {
-        return await handleSessions(request, url, db, validateRead);
-      }
-
-      // GET /events
-      if (path === '/events' && request.method === 'GET') {
-        return await handleEvents(request, url, db, validateRead);
-      }
-
-      // POST /query
-      if (path === '/query' && request.method === 'POST') {
-        return await handleQuery(request, url, db, validateRead);
-      }
-
-      // GET /properties/received
-      if (path === '/properties/received' && request.method === 'GET') {
-        return await handlePropertiesReceived(request, url, db, validateRead);
-      }
-
-      // GET /properties
-      if (path === '/properties' && request.method === 'GET') {
-        return await handleProperties(request, url, db, validateRead);
-      }
-
-      // GET /health
-      if (path === '/health') {
-        return { response: json({ status: 'ok', service: 'agent-analytics', ...healthExtra }) };
-      }
-
-      // GET /tracker.js
-      if (path === '/tracker.js') {
-        return {
-          response: new Response(TRACKER_JS, {
-            headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=3600', ...CORS_HEADERS },
-          }),
-        };
-      }
+      const handler = ROUTES[`${request.method} ${path}`];
+      if (handler) return await handler({ request, url, db, validateWrite, validateRead, useQueue });
 
       return { response: json({ error: 'not found' }, 404) };
     } catch (err) {
@@ -116,7 +83,7 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
 
 // --- Individual handlers ---
 
-async function handleTrack(request, db, validateWrite, useQueue) {
+async function handleTrack({ request, db, validateWrite, useQueue }) {
   const ua = request.headers.get('User-Agent');
   if (isBot(ua)) {
     return { response: json({ ok: true }) };
@@ -146,7 +113,7 @@ async function handleTrack(request, db, validateWrite, useQueue) {
   return { response: json({ ok: true }), writeOps: [writeOp] };
 }
 
-async function handleTrackBatch(request, db, validateWrite, useQueue) {
+async function handleTrackBatch({ request, db, validateWrite, useQueue }) {
   const ua = request.headers.get('User-Agent');
   if (isBot(ua)) {
     return { response: json({ ok: true }) };
@@ -186,7 +153,7 @@ async function handleTrackBatch(request, db, validateWrite, useQueue) {
   return { response: json({ ok: true, count: events.length }), writeOps: [writeOp] };
 }
 
-async function handleListProjects(request, url, db, validateRead) {
+async function handleListProjects({ request, url, db, validateRead }) {
   const auth = validateRead(request, url);
   if (!auth.valid) {
     return { response: json({ error: 'unauthorized - API key required' }, 401) };
@@ -196,7 +163,7 @@ async function handleListProjects(request, url, db, validateRead) {
   return { response: json({ projects }) };
 }
 
-async function handleStats(request, url, db, validateRead) {
+async function handleStats({ request, url, db, validateRead }) {
   const auth = validateRead(request, url);
   if (!auth.valid) {
     return { response: json({ error: 'unauthorized - API key required' }, 401) };
@@ -212,7 +179,7 @@ async function handleStats(request, url, db, validateRead) {
   return { response: json({ project, ...stats }) };
 }
 
-async function handleEvents(request, url, db, validateRead) {
+async function handleEvents({ request, url, db, validateRead }) {
   const auth = validateRead(request, url);
   if (!auth.valid) {
     return { response: json({ error: 'unauthorized - API key required' }, 401) };
@@ -230,7 +197,7 @@ async function handleEvents(request, url, db, validateRead) {
   return { response: json({ project, events }) };
 }
 
-async function handleQuery(request, url, db, validateRead) {
+async function handleQuery({ request, url, db, validateRead }) {
   const auth = validateRead(request, url);
   if (!auth.valid) {
     return { response: json({ error: 'unauthorized - API key required' }, 401) };
@@ -248,7 +215,7 @@ async function handleQuery(request, url, db, validateRead) {
   }
 }
 
-async function handleSessions(request, url, db, validateRead) {
+async function handleSessions({ request, url, db, validateRead }) {
   const auth = validateRead(request, url);
   if (!auth.valid) {
     return { response: json({ error: 'unauthorized - API key required' }, 401) };
@@ -267,7 +234,7 @@ async function handleSessions(request, url, db, validateRead) {
   return { response: json({ project, sessions }) };
 }
 
-async function handlePropertiesReceived(request, url, db, validateRead) {
+async function handlePropertiesReceived({ request, url, db, validateRead }) {
   const auth = validateRead(request, url);
   if (!auth.valid) {
     return { response: json({ error: 'unauthorized - API key required' }, 401) };
@@ -283,7 +250,7 @@ async function handlePropertiesReceived(request, url, db, validateRead) {
   return { response: json({ project, ...result }) };
 }
 
-async function handleProperties(request, url, db, validateRead) {
+async function handleProperties({ request, url, db, validateRead }) {
   const auth = validateRead(request, url);
   if (!auth.valid) {
     return { response: json({ error: 'unauthorized - API key required' }, 401) };
