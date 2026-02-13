@@ -8,7 +8,7 @@
  *   _batch(statements)     — execute [{sql, params}, ...] atomically
  */
 
-import { today, parseSince, parseSinceMs } from './adapter.js';
+import { formatDate, today, parseSince, parseSinceMs } from './adapter.js';
 import { ulid } from '../ulid.js';
 import { AnalyticsError, ERROR_CODES } from '../errors.js';
 import {
@@ -38,7 +38,7 @@ export class BaseAdapter {
 
   _sessionUpsertSqlAndParams(project, event_data) {
     const ts = event_data.timestamp || Date.now();
-    const date = new Date(ts).toISOString().split('T')[0];
+    const date = formatDate(ts);
     const page = (event_data.properties && typeof event_data.properties === 'object')
       ? (event_data.properties.path || event_data.properties.url || null)
       : null;
@@ -72,7 +72,7 @@ export class BaseAdapter {
 
   async trackEvent({ project, event, properties, user_id, session_id, timestamp }) {
     const ts = timestamp || Date.now();
-    const date = new Date(ts).toISOString().split('T')[0];
+    const date = formatDate(ts);
 
     const eventSql = `INSERT INTO events (id, project_id, event, properties, user_id, session_id, timestamp, date)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
@@ -100,7 +100,7 @@ export class BaseAdapter {
 
     for (const e of events) {
       const ts = e.timestamp || Date.now();
-      const date = new Date(ts).toISOString().split('T')[0];
+      const date = formatDate(ts);
       stmts.push({
         sql: eventSql,
         params: [

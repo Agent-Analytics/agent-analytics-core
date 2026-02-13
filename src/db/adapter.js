@@ -7,14 +7,20 @@
  */
 
 // Shared date helpers
+
+/** Convert a Date, epoch-ms number, or ISO string to YYYY-MM-DD. */
+export function formatDate(d) {
+  return (d instanceof Date ? d : new Date(d)).toISOString().split('T')[0];
+}
+
 export function today() {
-  return new Date().toISOString().split('T')[0];
+  return formatDate(new Date());
 }
 
 export function daysAgo(n) {
   const d = new Date();
   d.setDate(d.getDate() - n);
-  return d.toISOString().split('T')[0];
+  return formatDate(d);
 }
 
 /**
@@ -25,7 +31,7 @@ export function parseSince(since) {
   if (!since) return daysAgo(7);
   const d = new Date(since);
   if (isNaN(d.getTime())) return daysAgo(7);
-  return d.toISOString().split('T')[0];
+  return formatDate(d);
 }
 
 /**

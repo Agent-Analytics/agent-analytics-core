@@ -34,6 +34,19 @@ function withReadAuth(fn) {
   };
 }
 
+function withWriteAuth(fn) {
+  return async (ctx) => {
+    const ua = ctx.request.headers.get('User-Agent');
+    if (isBot(ua)) return { response: json({ ok: true }) };
+    const body = await ctx.request.json();
+    const auth = ctx.validateWrite(ctx.request, body);
+    if (!auth.valid) {
+      return { response: json(errorResponse(ERROR_CODES.FORBIDDEN, auth.error || 'forbidden'), 403) };
+    }
+    return fn({ ...ctx, body });
+  };
+}
+
 function withProjectRead(fn) {
   return withReadAuth(async (ctx) => {
     const project = ctx.url.searchParams.get('project');
@@ -43,8 +56,8 @@ function withProjectRead(fn) {
 }
 
 const ROUTES = {
-  'POST /track':              handleTrack,
-  'POST /track/batch':        handleTrackBatch,
+  'POST /track':              withWriteAuth(handleTrack),
+  'POST /track/batch':        withWriteAuth(handleTrackBatch),
   'GET /projects':            withReadAuth(handleListProjects),
   'GET /stats':               withProjectRead(handleStats),
   'GET /sessions':            withProjectRead(handleSessions),
@@ -106,22 +119,11 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
 
 // --- Individual handlers ---
 
-async function handleTrack({ request, db, validateWrite, useQueue }) {
-  const ua = request.headers.get('User-Agent');
-  if (isBot(ua)) {
-    return { response: json({ ok: true }) };
-  }
-
-  const body = await request.json();
+async function handleTrack({ body, db, useQueue }) {
   const { project, event, properties, user_id, session_id, timestamp } = body;
 
   if (!project || !event) {
     return { response: json(errorResponse(ERROR_CODES.MISSING_FIELDS, 'project and event required'), 400) };
-  }
-
-  const auth = validateWrite(request, body);
-  if (!auth.valid) {
-    return { response: json(errorResponse(ERROR_CODES.FORBIDDEN, auth.error || 'forbidden'), 403) };
   }
 
   const eventData = { project, event, properties, user_id, session_id, timestamp: timestamp || Date.now() };
@@ -136,13 +138,7 @@ async function handleTrack({ request, db, validateWrite, useQueue }) {
   return { response: json({ ok: true }), writeOps: [writeOp] };
 }
 
-async function handleTrackBatch({ request, db, validateWrite, useQueue }) {
-  const ua = request.headers.get('User-Agent');
-  if (isBot(ua)) {
-    return { response: json({ ok: true }) };
-  }
-
-  const body = await request.json();
+async function handleTrackBatch({ body, db, useQueue }) {
   const { events } = body;
 
   if (!Array.isArray(events) || events.length === 0) {
@@ -150,11 +146,6 @@ async function handleTrackBatch({ request, db, validateWrite, useQueue }) {
   }
   if (events.length > 100) {
     return { response: json(errorResponse(ERROR_CODES.BATCH_TOO_LARGE, 'max 100 events per batch'), 400) };
-  }
-
-  const auth = validateWrite(request, body);
-  if (!auth.valid) {
-    return { response: json(errorResponse(ERROR_CODES.FORBIDDEN, auth.error || 'forbidden'), 403) };
   }
 
   const normalized = events.map(e => ({
