@@ -8,7 +8,7 @@
 import { TRACKER_JS } from './tracker.js';
 import { isBot } from './bot.js';
 import { AnalyticsError, ERROR_CODES, errorResponse } from './errors.js';
-import { GRANULARITY } from './constants.js';
+import { GRANULARITY, DEFAULT_LIMIT, MAX_LIMIT, MAX_BATCH_SIZE } from './constants.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -144,8 +144,8 @@ async function handleTrackBatch({ body, db, useQueue }) {
   if (!Array.isArray(events) || events.length === 0) {
     return { response: json(errorResponse(ERROR_CODES.INVALID_BODY, 'events array required'), 400) };
   }
-  if (events.length > 100) {
-    return { response: json(errorResponse(ERROR_CODES.BATCH_TOO_LARGE, 'max 100 events per batch'), 400) };
+  if (events.length > MAX_BATCH_SIZE) {
+    return { response: json(errorResponse(ERROR_CODES.BATCH_TOO_LARGE, `max ${MAX_BATCH_SIZE} events per batch`), 400) };
   }
 
   const normalized = events.map(e => ({
@@ -184,7 +184,7 @@ async function handleEvents({ url, db, project }) {
   const event = url.searchParams.get('event');
   const session_id = url.searchParams.get('session_id');
   const since = url.searchParams.get('since') || undefined;
-  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || 100, 1), 1000);
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || DEFAULT_LIMIT, 1), MAX_LIMIT);
 
   const events = await db.getEvents({ project, event, session_id, since, limit });
   return { response: json({ project, events }) };
@@ -206,7 +206,7 @@ async function handleQuery({ request, db }) {
 
 async function handleSessions({ url, db, project }) {
   const since = url.searchParams.get('since') || undefined;
-  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || 100, 1), 1000);
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || DEFAULT_LIMIT, 1), MAX_LIMIT);
   const user_id = url.searchParams.get('user_id');
   const is_bounce_raw = url.searchParams.get('is_bounce');
   const is_bounce = is_bounce_raw !== null ? Number(is_bounce_raw) : undefined;

@@ -24,3 +24,12 @@ export const FILTER_OPS = Object.freeze({
 export const FILTERABLE_FIELDS = Object.freeze(['event', 'user_id', 'date']);
 
 export const ALLOWED_ORDER_BY = Object.freeze(['event_count', 'unique_users', 'date', 'event']);
+
+// Numeric limits
+export const DEFAULT_LIMIT = 100;
+export const MAX_LIMIT = 1000;
+export const DEFAULT_DAYS = 7;
+export const MS_PER_DAY = 86_400_000;
+export const TOP_EVENTS_LIMIT = 20;
+export const MAX_BATCH_SIZE = 100;
+export const MAX_BODY_BYTES = 1024 * 1024; // 1 MB

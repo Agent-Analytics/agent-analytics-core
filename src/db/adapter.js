@@ -6,6 +6,8 @@
  * db.trackEvent(), db.getStats(), etc.
  */
 
+import { DEFAULT_DAYS, MS_PER_DAY } from '../constants.js';
+
 // Shared date helpers
 
 /** Convert a Date, epoch-ms number, or ISO string to YYYY-MM-DD. */
@@ -28,9 +30,9 @@ export function daysAgo(n) {
  * Falls back to 7 days ago if missing/invalid.
  */
 export function parseSince(since) {
-  if (!since) return daysAgo(7);
+  if (!since) return daysAgo(DEFAULT_DAYS);
   const d = new Date(since);
-  if (isNaN(d.getTime())) return daysAgo(7);
+  if (isNaN(d.getTime())) return daysAgo(DEFAULT_DAYS);
   return formatDate(d);
 }
 
@@ -38,9 +40,9 @@ export function parseSince(since) {
  * Parse `since` into epoch ms (for timestamp-based queries like hourly).
  */
 export function parseSinceMs(since) {
-  if (!since) return Date.now() - 7 * 86400000;
+  if (!since) return Date.now() - DEFAULT_DAYS * MS_PER_DAY;
   const d = new Date(since);
-  if (isNaN(d.getTime())) return Date.now() - 7 * 86400000;
+  if (isNaN(d.getTime())) return Date.now() - DEFAULT_DAYS * MS_PER_DAY;
   return d.getTime();
 }
 

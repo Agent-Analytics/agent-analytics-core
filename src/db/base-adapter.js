@@ -17,6 +17,7 @@ import {
   GROUP_BY_FIELDS, ALLOWED_GROUP_BY,
   FILTER_OPS, FILTERABLE_FIELDS,
   ALLOWED_ORDER_BY,
+  DEFAULT_LIMIT, MAX_LIMIT, TOP_EVENTS_LIMIT,
 } from '../constants.js';
 
 export function validatePropertyKey(key) {
@@ -134,9 +135,9 @@ export class BaseAdapter {
 
   // --- Read methods ---
 
-  async getSessions({ project, since, user_id, is_bounce, limit = 100 }) {
+  async getSessions({ project, since, user_id, is_bounce, limit = DEFAULT_LIMIT }) {
     const fromDate = parseSince(since);
-    const safeLimit = Math.min(limit, 1000);
+    const safeLimit = Math.min(limit, MAX_LIMIT);
 
     let query = `SELECT * FROM sessions WHERE project_id = ? AND date >= ?`;
     const params = [project, fromDate];
@@ -219,7 +220,7 @@ export class BaseAdapter {
       this._queryAll(
         `SELECT event, COUNT(*) as count, COUNT(DISTINCT user_id) as unique_users
          FROM events WHERE project_id = ? AND date >= ?
-         GROUP BY event ORDER BY count DESC LIMIT 20`,
+         GROUP BY event ORDER BY count DESC LIMIT ${TOP_EVENTS_LIMIT}`,
         [project, fromDate],
       ),
 
@@ -241,9 +242,9 @@ export class BaseAdapter {
     };
   }
 
-  async getEvents({ project, event, session_id, since, limit = 100 }) {
+  async getEvents({ project, event, session_id, since, limit = DEFAULT_LIMIT }) {
     const fromDate = parseSince(since);
-    const safeLimit = Math.min(limit, 1000);
+    const safeLimit = Math.min(limit, MAX_LIMIT);
 
     let query = `SELECT * FROM events WHERE project_id = ? AND date >= ?`;
     const params = [project, fromDate];
@@ -268,7 +269,7 @@ export class BaseAdapter {
     }));
   }
 
-  async query({ project, metrics = [METRICS.EVENT_COUNT], filters, date_from, date_to, group_by = [], order_by, order, limit = 100 }) {
+  async query({ project, metrics = [METRICS.EVENT_COUNT], filters, date_from, date_to, group_by = [], order_by, order, limit = DEFAULT_LIMIT }) {
     for (const m of metrics) {
       if (!ALLOWED_METRICS.includes(m)) throw new AnalyticsError(ERROR_CODES.INVALID_METRIC, `invalid metric: ${m}. allowed: ${ALLOWED_METRICS.join(', ')}`, 400);
     }
@@ -316,7 +317,7 @@ export class BaseAdapter {
     const orderDir = order === 'asc' ? 'ASC' : 'DESC';
     sql += ` ORDER BY ${orderField} ${orderDir}`;
 
-    const maxLimit = Math.min(limit, 1000);
+    const maxLimit = Math.min(limit, MAX_LIMIT);
     sql += ` LIMIT ?`;
     params.push(maxLimit);
 
