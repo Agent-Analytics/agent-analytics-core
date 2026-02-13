@@ -8,6 +8,7 @@
 import { TRACKER_JS } from './tracker.js';
 import { isBot } from './bot.js';
 import { AnalyticsError, ERROR_CODES, errorResponse } from './errors.js';
+import { GRANULARITY } from './constants.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -182,7 +183,7 @@ async function handleListProjects({ db }) {
 
 async function handleStats({ url, db, project }) {
   const since = url.searchParams.get('since') || undefined;
-  const groupBy = url.searchParams.get('groupBy') || 'day';
+  const groupBy = url.searchParams.get('groupBy') || GRANULARITY.DAY;
   const stats = await db.getStats({ project, since, groupBy });
 
   return { response: json({ project, ...stats }) };

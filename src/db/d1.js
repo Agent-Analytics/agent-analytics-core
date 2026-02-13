@@ -8,6 +8,13 @@
 import { today, parseSince, parseSinceMs } from './adapter.js';
 import { ulid } from '../ulid.js';
 import { AnalyticsError, ERROR_CODES } from '../errors.js';
+import {
+  GRANULARITY, VALID_GRANULARITIES,
+  METRICS, ALLOWED_METRICS,
+  GROUP_BY_FIELDS, ALLOWED_GROUP_BY,
+  FILTER_OPS, FILTERABLE_FIELDS,
+  ALLOWED_ORDER_BY,
+} from '../constants.js';
 
 export function validatePropertyKey(key) {
   if (!key || key.length > 128 || !/^[a-zA-Z0-9_]+$/.test(key)) {
@@ -201,27 +208,26 @@ export class D1Adapter {
    * @param {string} [opts.since] - ISO timestamp (default: 7 days ago)
    * @param {string} [opts.groupBy] - hour | day | week | month (default: day)
    */
-  async getStats({ project, since, groupBy = 'day' }) {
+  async getStats({ project, since, groupBy = GRANULARITY.DAY }) {
     const fromDate = parseSince(since);
     const fromMs = parseSinceMs(since);
-    const VALID_GROUP = ['hour', 'day', 'week', 'month'];
-    if (!VALID_GROUP.includes(groupBy)) groupBy = 'day';
+    if (!VALID_GRANULARITIES.includes(groupBy)) groupBy = GRANULARITY.DAY;
 
     // Build the time bucket expression
     let bucketExpr;
-    if (groupBy === 'hour') {
+    if (groupBy === GRANULARITY.HOUR) {
       // Use timestamp (epoch ms) for hourly — gives YYYY-MM-DDTHH:00
       bucketExpr = `strftime('%Y-%m-%dT%H:00', timestamp / 1000, 'unixepoch')`;
-    } else if (groupBy === 'week') {
+    } else if (groupBy === GRANULARITY.WEEK) {
       // ISO week start (Monday)
       bucketExpr = `date(date, 'weekday 0', '-6 days')`;
-    } else if (groupBy === 'month') {
+    } else if (groupBy === GRANULARITY.MONTH) {
       bucketExpr = `strftime('%Y-%m', date)`;
     } else {
       bucketExpr = `date`;
     }
 
-    const timeSeriesQuery = groupBy === 'hour'
+    const timeSeriesQuery = groupBy === GRANULARITY.HOUR
       ? `SELECT ${bucketExpr} as bucket, COUNT(DISTINCT user_id) as unique_users, COUNT(*) as total_events
          FROM events WHERE project_id = ? AND timestamp >= ?
          GROUP BY bucket ORDER BY bucket`
@@ -229,7 +235,7 @@ export class D1Adapter {
          FROM events WHERE project_id = ? AND date >= ?
          GROUP BY bucket ORDER BY bucket`;
 
-    const bindVal = groupBy === 'hour' ? fromMs : fromDate;
+    const bindVal = groupBy === GRANULARITY.HOUR ? fromMs : fromDate;
 
     const [timeSeries, eventCounts, totals, sessions] = await Promise.all([
       this.db.prepare(timeSeriesQuery).bind(project, bindVal).all(),
@@ -291,10 +297,7 @@ export class D1Adapter {
   /**
    * Flexible analytics query with metrics, filters, grouping.
    */
-  async query({ project, metrics = ['event_count'], filters, date_from, date_to, group_by = [], order_by, order, limit = 100 }) {
-    const ALLOWED_METRICS = ['event_count', 'unique_users', 'session_count', 'bounce_rate', 'avg_duration'];
-    const ALLOWED_GROUP_BY = ['event', 'date', 'user_id', 'session_id'];
-
+  async query({ project, metrics = [METRICS.EVENT_COUNT], filters, date_from, date_to, group_by = [], order_by, order, limit = 100 }) {
     for (const m of metrics) {
       if (!ALLOWED_METRICS.includes(m)) throw new AnalyticsError(ERROR_CODES.INVALID_METRIC, `invalid metric: ${m}. allowed: ${ALLOWED_METRICS.join(', ')}`, 400);
     }
@@ -305,11 +308,11 @@ export class D1Adapter {
     // SELECT
     const selectParts = [...group_by];
     for (const m of metrics) {
-      if (m === 'event_count') selectParts.push('COUNT(*) as event_count');
-      if (m === 'unique_users') selectParts.push('COUNT(DISTINCT user_id) as unique_users');
-      if (m === 'session_count') selectParts.push('COUNT(DISTINCT session_id) as session_count');
-      if (m === 'bounce_rate') selectParts.push('COUNT(DISTINCT session_id) as _session_count_for_bounce');
-      if (m === 'avg_duration') selectParts.push('COUNT(DISTINCT session_id) as _session_count_for_duration');
+      if (m === METRICS.EVENT_COUNT) selectParts.push('COUNT(*) as event_count');
+      if (m === METRICS.UNIQUE_USERS) selectParts.push('COUNT(DISTINCT user_id) as unique_users');
+      if (m === METRICS.SESSION_COUNT) selectParts.push('COUNT(DISTINCT session_id) as session_count');
+      if (m === METRICS.BOUNCE_RATE) selectParts.push('COUNT(DISTINCT session_id) as _session_count_for_bounce');
+      if (m === METRICS.AVG_DURATION) selectParts.push('COUNT(DISTINCT session_id) as _session_count_for_duration');
     }
     if (selectParts.length === 0) selectParts.push('COUNT(*) as event_count');
 
@@ -321,9 +324,6 @@ export class D1Adapter {
 
     // Filters
     if (filters && Array.isArray(filters)) {
-      const FILTER_OPS = { eq: '=', neq: '!=', gt: '>', lt: '<', gte: '>=', lte: '<=' };
-      const FILTERABLE_FIELDS = ['event', 'user_id', 'date'];
-
       for (const f of filters) {
         if (!f.field || !f.op || f.value === undefined) continue;
         const sqlOp = FILTER_OPS[f.op];
@@ -346,8 +346,7 @@ export class D1Adapter {
     if (group_by.length > 0) sql += ` GROUP BY ${group_by.join(', ')}`;
 
     // ORDER
-    const ALLOWED_ORDER = ['event_count', 'unique_users', 'date', 'event'];
-    const orderField = order_by && ALLOWED_ORDER.includes(order_by) ? order_by : (group_by.includes('date') ? 'date' : 'event_count');
+    const orderField = order_by && ALLOWED_ORDER_BY.includes(order_by) ? order_by : (group_by.includes(GROUP_BY_FIELDS.DATE) ? GROUP_BY_FIELDS.DATE : METRICS.EVENT_COUNT);
     const orderDir = order === 'asc' ? 'ASC' : 'DESC';
     sql += ` ORDER BY ${orderField} ${orderDir}`;
 
