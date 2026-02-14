@@ -184,7 +184,7 @@ async function handleEvents({ url, db, project }) {
   const event = url.searchParams.get('event');
   const session_id = url.searchParams.get('session_id');
   const since = url.searchParams.get('since') || undefined;
-  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit'), 10) || DEFAULT_LIMIT, 1), MAX_LIMIT);
 
   const events = await db.getEvents({ project, event, session_id, since, limit });
   return { response: json({ project, events }) };
@@ -206,7 +206,7 @@ async function handleQuery({ request, db }) {
 
 async function handleSessions({ url, db, project }) {
   const since = url.searchParams.get('since') || undefined;
-  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit')) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit'), 10) || DEFAULT_LIMIT, 1), MAX_LIMIT);
   const user_id = url.searchParams.get('user_id');
   const is_bounce_raw = url.searchParams.get('is_bounce');
   const is_bounce = is_bounce_raw !== null ? Number(is_bounce_raw) : undefined;
@@ -217,7 +217,7 @@ async function handleSessions({ url, db, project }) {
 
 async function handlePropertiesReceived({ url, db, project }) {
   const since = url.searchParams.get('since') || undefined;
-  const sample = parseInt(url.searchParams.get('sample')) || 5000;
+  const sample = parseInt(url.searchParams.get('sample'), 10) || 5000;
   const result = await db.getPropertiesReceived({ project, since, sample });
 
   return { response: json({ project, ...result }) };
