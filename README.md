@@ -108,6 +108,11 @@ curl -X POST "https://your-server.com/query" \
 - `POST /query` — the big one. Metrics (`event_count`, `unique_users`, `session_count`, `bounce_rate`, `avg_duration`), `group_by`, `filters` on fields or `properties.*`, `order_by`, date range. Property filters use `json_extract` under the hood — keys are validated to prevent injection.
 - `GET /properties?project=X` — event names + property keys seen in recent data
 - `GET /properties/received?project=X` — which property keys appear on which event types (sampled)
+- `GET /breakdown?project=X&property=path` — top property values with unique user counts
+- `GET /insights?project=X&period=7d` — period-over-period comparison with trend direction
+- `GET /pages?project=X&type=entry` — entry/exit page stats (bounce rate, avg duration)
+- `GET /sessions/distribution?project=X` — session duration buckets with engaged_pct
+- `GET /heatmap?project=X` — day-of-week × hour traffic grid with peak detection
 - `GET /projects` — all projects derived from events data
 
 **Utility:** `GET /health`, `GET /tracker.js`
