@@ -18,6 +18,7 @@ import {
   FILTER_OPS, FILTERABLE_FIELDS,
   ALLOWED_ORDER_BY,
   DEFAULT_LIMIT, MAX_LIMIT, TOP_EVENTS_LIMIT,
+  DURATION_BUCKETS, DAY_NAMES,
 } from '../constants.js';
 
 export function validatePropertyKey(key) {
@@ -395,5 +396,272 @@ export class BaseAdapter {
       since: fromDate,
       properties: rows,
     };
+  }
+
+  // --- Analytics endpoints ---
+
+  async getBreakdown({ project, property, event, since, limit = 20 }) {
+    validatePropertyKey(property);
+    const fromDate = parseSince(since);
+    const safeLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
+
+    let sql = `SELECT json_extract(properties, '$.${property}') as value,
+                      COUNT(*) as count,
+                      COUNT(DISTINCT user_id) as unique_users
+               FROM events
+               WHERE project_id = ? AND date >= ?
+                 AND properties IS NOT NULL
+                 AND json_extract(properties, '$.${property}') IS NOT NULL`;
+    const params = [project, fromDate];
+
+    if (event) {
+      sql += ` AND event = ?`;
+      params.push(event);
+    }
+
+    sql += ` GROUP BY value ORDER BY count DESC LIMIT ?`;
+    params.push(safeLimit);
+
+    const values = await this._queryAll(sql, params);
+
+    // Totals
+    let totalSql = `SELECT COUNT(*) as total_events,
+                           SUM(CASE WHEN json_extract(properties, '$.${property}') IS NOT NULL THEN 1 ELSE 0 END) as total_with_property
+                    FROM events WHERE project_id = ? AND date >= ?`;
+    const totalParams = [project, fromDate];
+    if (event) {
+      totalSql += ` AND event = ?`;
+      totalParams.push(event);
+    }
+    const totals = await this._queryOne(totalSql, totalParams);
+
+    return {
+      property,
+      event: event || null,
+      values,
+      total_events: totals?.total_events || 0,
+      total_with_property: totals?.total_with_property || 0,
+    };
+  }
+
+  async getInsights({ project, period = '7d', since }) {
+    // Parse period into days
+    const periodDays = parseInt(period, 10) || 7;
+    const now = Date.now();
+    const currentEnd = today();
+    const currentStartMs = now - periodDays * 86_400_000;
+    const currentStart = formatDate(currentStartMs);
+    const previousEndMs = currentStartMs - 1;
+    const previousStartMs = previousEndMs - periodDays * 86_400_000;
+    const previousStart = formatDate(previousStartMs);
+    const previousEnd = formatDate(previousEndMs);
+
+    // Run 4 queries: current events, previous events, current sessions, previous sessions
+    const [curEvents, prevEvents, curSessions, prevSessions] = await Promise.all([
+      this._queryOne(
+        `SELECT COUNT(*) as total_events, COUNT(DISTINCT user_id) as unique_users
+         FROM events WHERE project_id = ? AND date >= ? AND date <= ?`,
+        [project, currentStart, currentEnd],
+      ),
+      this._queryOne(
+        `SELECT COUNT(*) as total_events, COUNT(DISTINCT user_id) as unique_users
+         FROM events WHERE project_id = ? AND date >= ? AND date <= ?`,
+        [project, previousStart, previousEnd],
+      ),
+      this._queryOne(
+        `SELECT COUNT(*) as total_sessions,
+                SUM(CASE WHEN is_bounce = 1 THEN 1 ELSE 0 END) as bounced,
+                AVG(duration) as avg_duration
+         FROM sessions WHERE project_id = ? AND date >= ? AND date <= ?`,
+        [project, currentStart, currentEnd],
+      ),
+      this._queryOne(
+        `SELECT COUNT(*) as total_sessions,
+                SUM(CASE WHEN is_bounce = 1 THEN 1 ELSE 0 END) as bounced,
+                AVG(duration) as avg_duration
+         FROM sessions WHERE project_id = ? AND date >= ? AND date <= ?`,
+        [project, previousStart, previousEnd],
+      ),
+    ]);
+
+    function delta(current, previous) {
+      const change = current - previous;
+      const change_pct = previous > 0 ? Math.round((change / previous) * 100) : (current > 0 ? null : 0);
+      return { current, previous, change, change_pct };
+    }
+
+    const curTotal = curEvents?.total_events || 0;
+    const prevTotal = prevEvents?.total_events || 0;
+    const curUsers = curEvents?.unique_users || 0;
+    const prevUsers = prevEvents?.unique_users || 0;
+    const curSessionTotal = curSessions?.total_sessions || 0;
+    const prevSessionTotal = prevSessions?.total_sessions || 0;
+    const curBounced = curSessions?.bounced || 0;
+    const prevBounced = prevSessions?.bounced || 0;
+    const curBounceRate = curSessionTotal > 0 ? Math.round((curBounced / curSessionTotal) * 1000) / 1000 : 0;
+    const prevBounceRate = prevSessionTotal > 0 ? Math.round((prevBounced / prevSessionTotal) * 1000) / 1000 : 0;
+    const curAvgDuration = Math.round(curSessions?.avg_duration || 0);
+    const prevAvgDuration = Math.round(prevSessions?.avg_duration || 0);
+
+    const eventsDelta = delta(curTotal, prevTotal);
+    const changePct = eventsDelta.change_pct;
+    const trend = changePct === null || changePct > 10 ? 'growing'
+      : changePct < -10 ? 'declining'
+      : 'stable';
+
+    return {
+      current_period: { from: currentStart, to: currentEnd },
+      previous_period: { from: previousStart, to: previousEnd },
+      metrics: {
+        total_events: delta(curTotal, prevTotal),
+        unique_users: delta(curUsers, prevUsers),
+        total_sessions: delta(curSessionTotal, prevSessionTotal),
+        bounce_rate: delta(curBounceRate, prevBounceRate),
+        avg_duration: delta(curAvgDuration, prevAvgDuration),
+      },
+      trend,
+    };
+  }
+
+  async getPages({ project, type = 'entry', since, limit = 20 }) {
+    const fromDate = parseSince(since);
+    const safeLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
+
+    const buildQuery = (pageCol) => {
+      return {
+        sql: `SELECT ${pageCol} as page,
+                     COUNT(*) as sessions,
+                     SUM(CASE WHEN is_bounce = 1 THEN 1 ELSE 0 END) as bounces,
+                     ROUND(CAST(SUM(CASE WHEN is_bounce = 1 THEN 1 ELSE 0 END) AS REAL) / COUNT(*), 3) as bounce_rate,
+                     ROUND(AVG(duration)) as avg_duration,
+                     ROUND(AVG(event_count), 1) as avg_events
+              FROM sessions
+              WHERE project_id = ? AND date >= ? AND ${pageCol} IS NOT NULL
+              GROUP BY ${pageCol}
+              ORDER BY sessions DESC
+              LIMIT ?`,
+        params: [project, fromDate, safeLimit],
+      };
+    };
+
+    if (type === 'both') {
+      const [entryRows, exitRows] = await Promise.all([
+        this._queryAll(buildQuery('entry_page').sql, buildQuery('entry_page').params),
+        this._queryAll(buildQuery('exit_page').sql, buildQuery('exit_page').params),
+      ]);
+      return { entry_pages: entryRows, exit_pages: exitRows };
+    }
+
+    const pageCol = type === 'exit' ? 'exit_page' : 'entry_page';
+    const q = buildQuery(pageCol);
+    const rows = await this._queryAll(q.sql, q.params);
+
+    return type === 'exit'
+      ? { exit_pages: rows }
+      : { entry_pages: rows };
+  }
+
+  async getSessionDistribution({ project, since }) {
+    const fromDate = parseSince(since);
+
+    const rows = await this._queryAll(
+      `SELECT
+        CASE
+          WHEN duration = 0 THEN '0s'
+          WHEN duration < 10000 THEN '1-10s'
+          WHEN duration < 30000 THEN '10-30s'
+          WHEN duration < 60000 THEN '30-60s'
+          WHEN duration < 180000 THEN '1-3m'
+          WHEN duration < 600000 THEN '3-10m'
+          ELSE '10m+'
+        END as bucket,
+        COUNT(*) as sessions,
+        SUM(CASE WHEN is_bounce = 1 THEN 1 ELSE 0 END) as bounces,
+        ROUND(AVG(event_count), 1) as avg_events
+      FROM sessions
+      WHERE project_id = ? AND date >= ?
+      GROUP BY bucket
+      ORDER BY MIN(duration)`,
+      [project, fromDate],
+    );
+
+    if (rows.length === 0) {
+      return { distribution: [], median_bucket: null, engaged_pct: 0 };
+    }
+
+    const totalSessions = rows.reduce((sum, r) => sum + r.sessions, 0);
+
+    // Add pct to each row
+    const distribution = rows.map(r => ({
+      ...r,
+      pct: Math.round((r.sessions / totalSessions) * 1000) / 10,
+    }));
+
+    // Compute median bucket (bucket containing the 50th percentile session)
+    let cumulative = 0;
+    let medianBucket = null;
+    for (const r of distribution) {
+      cumulative += r.sessions;
+      if (cumulative >= totalSessions / 2) {
+        medianBucket = r.bucket;
+        break;
+      }
+    }
+
+    // Engaged = sessions with duration >= 30000 (30s)
+    const engagedBuckets = ['30-60s', '1-3m', '3-10m', '10m+'];
+    const engaged = distribution
+      .filter(r => engagedBuckets.includes(r.bucket))
+      .reduce((sum, r) => sum + r.sessions, 0);
+    const engagedPct = Math.round((engaged / totalSessions) * 1000) / 10;
+
+    return { distribution, median_bucket: medianBucket, engaged_pct: engagedPct };
+  }
+
+  async getHeatmap({ project, since }) {
+    const fromDate = parseSince(since);
+
+    const rows = await this._queryAll(
+      `SELECT CAST(strftime('%w', date) AS INTEGER) as day,
+              CAST(strftime('%H', timestamp / 1000, 'unixepoch') AS INTEGER) as hour,
+              COUNT(*) as events,
+              COUNT(DISTINCT user_id) as users
+       FROM events
+       WHERE project_id = ? AND date >= ?
+       GROUP BY day, hour
+       ORDER BY day, hour`,
+      [project, fromDate],
+    );
+
+    if (rows.length === 0) {
+      return { heatmap: [], peak: null, busiest_day: null, busiest_hour: null };
+    }
+
+    // Add day_name
+    const heatmap = rows.map(r => ({
+      ...r,
+      day_name: DAY_NAMES[r.day],
+    }));
+
+    // Find peak (highest events)
+    const peakEntry = heatmap.reduce((best, r) => r.events > best.events ? r : best, heatmap[0]);
+    const peak = { day: peakEntry.day, day_name: peakEntry.day_name, hour: peakEntry.hour, events: peakEntry.events, users: peakEntry.users };
+
+    // Busiest day (sum events per day)
+    const dayTotals = {};
+    for (const r of heatmap) {
+      dayTotals[r.day] = (dayTotals[r.day] || 0) + r.events;
+    }
+    const busiestDayNum = Object.entries(dayTotals).sort((a, b) => b[1] - a[1])[0][0];
+    const busiest_day = DAY_NAMES[Number(busiestDayNum)];
+
+    // Busiest hour (sum events per hour)
+    const hourTotals = {};
+    for (const r of heatmap) {
+      hourTotals[r.hour] = (hourTotals[r.hour] || 0) + r.events;
+    }
+    const busiest_hour = Number(Object.entries(hourTotals).sort((a, b) => b[1] - a[1])[0][0]);
+
+    return { heatmap, peak, busiest_day, busiest_hour };
   }
 }

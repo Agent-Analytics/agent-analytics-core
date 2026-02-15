@@ -25,6 +25,22 @@ export const FILTERABLE_FIELDS = Object.freeze(['event', 'user_id', 'date']);
 
 export const ALLOWED_ORDER_BY = Object.freeze(['event_count', 'unique_users', 'date', 'event']);
 
+// Analytics endpoint constants
+export const DURATION_BUCKETS = Object.freeze([
+  { key: '0s',     min: 0,      max: 0 },
+  { key: '1-10s',  min: 1,      max: 9999 },
+  { key: '10-30s', min: 10000,  max: 29999 },
+  { key: '30-60s', min: 30000,  max: 59999 },
+  { key: '1-3m',   min: 60000,  max: 179999 },
+  { key: '3-10m',  min: 180000, max: 599999 },
+  { key: '10m+',   min: 600000, max: Infinity },
+]);
+
+export const VALID_PERIODS = Object.freeze(['1d', '7d', '14d', '30d', '90d']);
+export const VALID_PAGE_TYPES = Object.freeze(['entry', 'exit', 'both']);
+
+export const DAY_NAMES = Object.freeze(['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']);
+
 // Numeric limits
 export const DEFAULT_LIMIT = 100;
 export const MAX_LIMIT = 1000;

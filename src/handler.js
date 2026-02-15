@@ -8,7 +8,7 @@
 import { TRACKER_JS } from './tracker.js';
 import { isBot } from './bot.js';
 import { AnalyticsError, ERROR_CODES, errorResponse } from './errors.js';
-import { GRANULARITY, DEFAULT_LIMIT, MAX_LIMIT, MAX_BATCH_SIZE } from './constants.js';
+import { GRANULARITY, DEFAULT_LIMIT, MAX_LIMIT, MAX_BATCH_SIZE, VALID_PAGE_TYPES } from './constants.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -65,6 +65,11 @@ const ROUTES = {
   'POST /query':              withReadAuth(handleQuery),
   'GET /properties/received': withProjectRead(handlePropertiesReceived),
   'GET /properties':          withProjectRead(handleProperties),
+  'GET /breakdown':           withProjectRead(handleBreakdown),
+  'GET /insights':            withProjectRead(handleInsights),
+  'GET /pages':               withProjectRead(handlePages),
+  'GET /sessions/distribution': withProjectRead(handleSessionDistribution),
+  'GET /heatmap':             withProjectRead(handleHeatmap),
 };
 
 /**
@@ -227,5 +232,46 @@ async function handleProperties({ url, db, project }) {
   const since = url.searchParams.get('since') || undefined;
   const result = await db.getProperties({ project, since });
 
+  return { response: json({ project, ...result }) };
+}
+
+async function handleBreakdown({ url, db, project }) {
+  const property = url.searchParams.get('property');
+  if (!property) return { response: json(errorResponse(ERROR_CODES.MISSING_FIELDS, 'property query parameter required'), 400) };
+  const event = url.searchParams.get('event') || undefined;
+  const since = url.searchParams.get('since') || undefined;
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit'), 10) || 20, 1), MAX_LIMIT);
+
+  const result = await db.getBreakdown({ project, property, event, since, limit });
+  return { response: json({ project, ...result }) };
+}
+
+async function handleInsights({ url, db, project }) {
+  const period = url.searchParams.get('period') || '7d';
+  const result = await db.getInsights({ project, period });
+  return { response: json({ project, ...result }) };
+}
+
+async function handlePages({ url, db, project }) {
+  const type = url.searchParams.get('type') || 'entry';
+  if (!VALID_PAGE_TYPES.includes(type)) {
+    return { response: json(errorResponse(ERROR_CODES.MISSING_FIELDS, `type must be one of: ${VALID_PAGE_TYPES.join(', ')}`), 400) };
+  }
+  const since = url.searchParams.get('since') || undefined;
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit'), 10) || 20, 1), MAX_LIMIT);
+
+  const result = await db.getPages({ project, type, since, limit });
+  return { response: json({ project, ...result }) };
+}
+
+async function handleSessionDistribution({ url, db, project }) {
+  const since = url.searchParams.get('since') || undefined;
+  const result = await db.getSessionDistribution({ project, since });
+  return { response: json({ project, ...result }) };
+}
+
+async function handleHeatmap({ url, db, project }) {
+  const since = url.searchParams.get('since') || undefined;
+  const result = await db.getHeatmap({ project, since });
   return { response: json({ project, ...result }) };
 }
