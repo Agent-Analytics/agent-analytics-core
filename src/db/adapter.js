@@ -31,6 +31,8 @@ export function daysAgo(n) {
  */
 export function parseSince(since) {
   if (!since) return daysAgo(DEFAULT_DAYS);
+  const m = typeof since === 'string' && since.match(/^(\d+)d$/);
+  if (m) return daysAgo(Number(m[1]));
   const d = new Date(since);
   if (isNaN(d.getTime())) return daysAgo(DEFAULT_DAYS);
   return formatDate(d);
@@ -41,6 +43,8 @@ export function parseSince(since) {
  */
 export function parseSinceMs(since) {
   if (!since) return Date.now() - DEFAULT_DAYS * MS_PER_DAY;
+  const m = typeof since === 'string' && since.match(/^(\d+)d$/);
+  if (m) return Date.now() - Number(m[1]) * MS_PER_DAY;
   const d = new Date(since);
   if (isNaN(d.getTime())) return Date.now() - DEFAULT_DAYS * MS_PER_DAY;
   return d.getTime();
