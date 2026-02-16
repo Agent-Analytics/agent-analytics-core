@@ -235,6 +235,13 @@ describe('BaseAdapter.getInsights', () => {
 
     assert.equal(result.trend, 'growing');
   });
+
+  test('rejects invalid period', async () => {
+    await assert.rejects(
+      () => adapter.getInsights({ project: 'p', period: '999d' }),
+      /invalid period/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

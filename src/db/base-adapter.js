@@ -18,7 +18,7 @@ import {
   FILTER_OPS, FILTERABLE_FIELDS,
   ALLOWED_ORDER_BY,
   DEFAULT_LIMIT, MAX_LIMIT, TOP_EVENTS_LIMIT,
-  DURATION_BUCKETS, DAY_NAMES,
+  DAY_NAMES, VALID_PERIODS,
 } from '../constants.js';
 
 export function validatePropertyKey(key) {
@@ -444,9 +444,11 @@ export class BaseAdapter {
     };
   }
 
-  async getInsights({ project, period = '7d', since }) {
-    // Parse period into days
-    const periodDays = parseInt(period, 10) || 7;
+  async getInsights({ project, period = '7d' }) {
+    if (!VALID_PERIODS.includes(period)) {
+      throw new AnalyticsError(ERROR_CODES.MISSING_FIELDS, `invalid period: ${period}. allowed: ${VALID_PERIODS.join(', ')}`, 400);
+    }
+    const periodDays = parseInt(period, 10);
     const now = Date.now();
     const currentEnd = today();
     const currentStartMs = now - periodDays * 86_400_000;
