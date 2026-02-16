@@ -39,3 +39,6 @@ export const MS_PER_DAY = 86_400_000;
 export const TOP_EVENTS_LIMIT = 20;
 export const MAX_BATCH_SIZE = 100;
 export const MAX_BODY_BYTES = 1024 * 1024; // 1 MB
+export const DEFAULT_SAMPLE_SIZE = 5000;
+export const MIN_SAMPLE_SIZE = 100;
+export const MAX_SAMPLE_SIZE = 10_000;

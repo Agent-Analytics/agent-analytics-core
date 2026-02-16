@@ -81,6 +81,7 @@
   // --- Event queue ---
   var queue = [];
   var flushTimer = null;
+  var FLUSH_INTERVAL = 5000;
 
   function send(url, data) {
     if (navigator.sendBeacon) {
@@ -106,7 +107,7 @@
   }
 
   function scheduleFlush() {
-    if (!flushTimer) flushTimer = setTimeout(function() { flushTimer = null; flush(); }, 5000);
+    if (!flushTimer) flushTimer = setTimeout(function() { flushTimer = null; flush(); }, FLUSH_INTERVAL);
   }
 
   // Flush on visibility hidden / beforeunload

@@ -8,7 +8,7 @@
 import { TRACKER_JS } from './tracker.js';
 import { isBot } from './bot.js';
 import { AnalyticsError, ERROR_CODES, errorResponse } from './errors.js';
-import { GRANULARITY, DEFAULT_LIMIT, MAX_LIMIT, MAX_BATCH_SIZE, VALID_PAGE_TYPES } from './constants.js';
+import { GRANULARITY, DEFAULT_LIMIT, MAX_LIMIT, MAX_BATCH_SIZE, VALID_PAGE_TYPES, TOP_EVENTS_LIMIT, DEFAULT_SAMPLE_SIZE } from './constants.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -222,7 +222,7 @@ async function handleSessions({ url, db, project }) {
 
 async function handlePropertiesReceived({ url, db, project }) {
   const since = url.searchParams.get('since') || undefined;
-  const sample = parseInt(url.searchParams.get('sample'), 10) || 5000;
+  const sample = parseInt(url.searchParams.get('sample'), 10) || DEFAULT_SAMPLE_SIZE;
   const result = await db.getPropertiesReceived({ project, since, sample });
 
   return { response: json({ project, ...result }) };
@@ -240,7 +240,7 @@ async function handleBreakdown({ url, db, project }) {
   if (!property) return { response: json(errorResponse(ERROR_CODES.MISSING_FIELDS, 'property query parameter required'), 400) };
   const event = url.searchParams.get('event') || undefined;
   const since = url.searchParams.get('since') || undefined;
-  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit'), 10) || 20, 1), MAX_LIMIT);
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit'), 10) || TOP_EVENTS_LIMIT, 1), MAX_LIMIT);
 
   const result = await db.getBreakdown({ project, property, event, since, limit });
   return { response: json({ project, ...result }) };
@@ -258,7 +258,7 @@ async function handlePages({ url, db, project }) {
     return { response: json(errorResponse(ERROR_CODES.MISSING_FIELDS, `type must be one of: ${VALID_PAGE_TYPES.join(', ')}`), 400) };
   }
   const since = url.searchParams.get('since') || undefined;
-  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit'), 10) || 20, 1), MAX_LIMIT);
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit'), 10) || TOP_EVENTS_LIMIT, 1), MAX_LIMIT);
 
   const result = await db.getPages({ project, type, since, limit });
   return { response: json({ project, ...result }) };

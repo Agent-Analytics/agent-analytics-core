@@ -17,7 +17,8 @@ import {
   GROUP_BY_FIELDS, ALLOWED_GROUP_BY,
   FILTER_OPS, FILTERABLE_FIELDS,
   ALLOWED_ORDER_BY,
-  DEFAULT_LIMIT, MAX_LIMIT, TOP_EVENTS_LIMIT,
+  DEFAULT_LIMIT, MAX_LIMIT, TOP_EVENTS_LIMIT, MS_PER_DAY,
+  DEFAULT_SAMPLE_SIZE, MIN_SAMPLE_SIZE, MAX_SAMPLE_SIZE,
   DAY_NAMES, VALID_PERIODS,
 } from '../constants.js';
 
@@ -35,6 +36,15 @@ export class BaseAdapter {
   async _queryAll(sql, params) { throw new Error('_queryAll not implemented'); }
   async _queryOne(sql, params) { throw new Error('_queryOne not implemented'); }
   async _batch(statements) { throw new Error('_batch not implemented'); }
+
+  _buildWhere(project, fromDate, filters = []) {
+    const parts = ['project_id = ?', 'date >= ?'];
+    const params = [project, fromDate];
+    for (const [cond, val] of filters) {
+      if (val != null) { parts.push(cond); params.push(val); }
+    }
+    return { clause: parts.join(' AND '), params };
+  }
 
   // --- Session upsert SQL builder ---
 
@@ -139,23 +149,14 @@ export class BaseAdapter {
   async getSessions({ project, since, user_id, is_bounce, limit = DEFAULT_LIMIT }) {
     const fromDate = parseSince(since);
     const safeLimit = Math.min(limit, MAX_LIMIT);
-
-    let query = `SELECT * FROM sessions WHERE project_id = ? AND date >= ?`;
-    const params = [project, fromDate];
-
-    if (user_id) {
-      query += ` AND user_id = ?`;
-      params.push(user_id);
-    }
-    if (is_bounce !== undefined && is_bounce !== null) {
-      query += ` AND is_bounce = ?`;
-      params.push(Number(is_bounce));
-    }
-
-    query += ` ORDER BY start_time DESC LIMIT ?`;
+    const { clause, params } = this._buildWhere(project, fromDate, [
+      ['user_id = ?', user_id],
+      ['is_bounce = ?', is_bounce != null ? Number(is_bounce) : undefined],
+    ]);
     params.push(safeLimit);
-
-    return this._queryAll(query, params);
+    return this._queryAll(
+      `SELECT * FROM sessions WHERE ${clause} ORDER BY start_time DESC LIMIT ?`, params,
+    );
   }
 
   async getSessionStats({ project, since }) {
@@ -246,28 +247,15 @@ export class BaseAdapter {
   async getEvents({ project, event, session_id, since, limit = DEFAULT_LIMIT }) {
     const fromDate = parseSince(since);
     const safeLimit = Math.min(limit, MAX_LIMIT);
-
-    let query = `SELECT * FROM events WHERE project_id = ? AND date >= ?`;
-    const params = [project, fromDate];
-
-    if (event) {
-      query += ` AND event = ?`;
-      params.push(event);
-    }
-    if (session_id) {
-      query += ` AND session_id = ?`;
-      params.push(session_id);
-    }
-
-    query += ` ORDER BY timestamp DESC LIMIT ?`;
+    const { clause, params } = this._buildWhere(project, fromDate, [
+      ['event = ?', event],
+      ['session_id = ?', session_id],
+    ]);
     params.push(safeLimit);
-
-    const rows = await this._queryAll(query, params);
-
-    return rows.map(e => ({
-      ...e,
-      properties: e.properties ? JSON.parse(e.properties) : null,
-    }));
+    const rows = await this._queryAll(
+      `SELECT * FROM events WHERE ${clause} ORDER BY timestamp DESC LIMIT ?`, params,
+    );
+    return rows.map(e => ({ ...e, properties: e.properties ? JSON.parse(e.properties) : null }));
   }
 
   async query({ project, metrics = [METRICS.EVENT_COUNT], filters, date_from, date_to, group_by = [], order_by, order, limit = DEFAULT_LIMIT }) {
@@ -356,7 +344,7 @@ export class BaseAdapter {
       this._queryAll(
         `SELECT DISTINCT properties FROM events
          WHERE project_id = ? AND properties IS NOT NULL AND date >= ?
-         ORDER BY timestamp DESC LIMIT 100`,
+         ORDER BY timestamp DESC LIMIT ${DEFAULT_LIMIT}`,
         [project, fromDate],
       ),
     ]);
@@ -375,9 +363,9 @@ export class BaseAdapter {
     };
   }
 
-  async getPropertiesReceived({ project, since, sample = 5000 }) {
+  async getPropertiesReceived({ project, since, sample = DEFAULT_SAMPLE_SIZE }) {
     const fromDate = parseSince(since);
-    const safeSample = Math.min(Math.max(sample, 100), 10000);
+    const safeSample = Math.min(Math.max(sample, MIN_SAMPLE_SIZE), MAX_SAMPLE_SIZE);
 
     const rows = await this._queryAll(
       `SELECT DISTINCT j.key as key, e.event
@@ -400,7 +388,7 @@ export class BaseAdapter {
 
   // --- Analytics endpoints ---
 
-  async getBreakdown({ project, property, event, since, limit = 20 }) {
+  async getBreakdown({ project, property, event, since, limit = TOP_EVENTS_LIMIT }) {
     validatePropertyKey(property);
     const fromDate = parseSince(since);
     const safeLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
@@ -451,10 +439,10 @@ export class BaseAdapter {
     const periodDays = parseInt(period, 10);
     const now = Date.now();
     const currentEnd = today();
-    const currentStartMs = now - periodDays * 86_400_000;
+    const currentStartMs = now - periodDays * MS_PER_DAY;
     const currentStart = formatDate(currentStartMs);
     const previousEndMs = currentStartMs - 1;
-    const previousStartMs = previousEndMs - periodDays * 86_400_000;
+    const previousStartMs = previousEndMs - periodDays * MS_PER_DAY;
     const previousStart = formatDate(previousStartMs);
     const previousEnd = formatDate(previousEndMs);
 
@@ -525,7 +513,7 @@ export class BaseAdapter {
     };
   }
 
-  async getPages({ project, type = 'entry', since, limit = 20 }) {
+  async getPages({ project, type = 'entry', since, limit = TOP_EVENTS_LIMIT }) {
     const fromDate = parseSince(since);
     const safeLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
 
