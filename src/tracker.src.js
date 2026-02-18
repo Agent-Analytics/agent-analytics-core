@@ -138,6 +138,23 @@
     return p;
   }
 
+  // --- Experiments ---
+  var experimentCache = {};
+  var experimentConfig = null;
+  var configLoaded = false;
+
+  (function loadExperimentConfig() {
+    if (!TOKEN) { configLoaded = true; return; }
+    var configUrl = ENDPOINT.replace('/track', '/experiments/config') + '?token=' + TOKEN;
+    fetch(configUrl, { credentials: 'omit' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        experimentConfig = data.experiments || [];
+        configLoaded = true;
+      })
+      .catch(function() { configLoaded = true; });
+  })();
+
   var aa = {
     track: function(event, properties) {
       queue.push({
@@ -159,6 +176,44 @@
 
     page: function(name) {
       this.track('page_view', { page: name || document.title });
+    },
+
+    experiment: function(name, variants) {
+      if (experimentCache[name] !== undefined) return experimentCache[name];
+
+      var config = null;
+      if (experimentConfig) {
+        for (var i = 0; i < experimentConfig.length; i++) {
+          if (experimentConfig[i].key === name) { config = experimentConfig[i]; break; }
+        }
+      }
+
+      if (!config && variants) {
+        var w = Math.floor(100 / variants.length);
+        var remainder = 100 - (w * variants.length);
+        config = { key: name, variants: variants.map(function(v, idx) { return { key: v, weight: w + (idx === 0 ? remainder : 0) }; }) };
+      }
+
+      if (!config) return null;
+
+      var str = name + '.' + userId;
+      var hash = 0;
+      for (var j = 0; j < str.length; j++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(j);
+        hash = hash & hash;
+      }
+      var bucket = Math.abs(hash) % 100;
+
+      var cumulative = 0;
+      var assigned = config.variants[0].key;
+      for (var k = 0; k < config.variants.length; k++) {
+        cumulative += config.variants[k].weight;
+        if (bucket < cumulative) { assigned = config.variants[k].key; break; }
+      }
+
+      experimentCache[name] = assigned;
+      aa.track('$experiment_exposure', { experiment: name, variant: assigned });
+      return assigned;
     }
   };
 
