@@ -143,18 +143,6 @@
   var experimentConfig = null;
   var configLoaded = false;
 
-  (function loadExperimentConfig() {
-    if (!TOKEN) { configLoaded = true; return; }
-    var configUrl = ENDPOINT.replace('/track', '/experiments/config') + '?token=' + TOKEN;
-    fetch(configUrl, { credentials: 'omit' })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        experimentConfig = data.experiments || [];
-        configLoaded = true;
-      })
-      .catch(function() { configLoaded = true; });
-  })();
-
   var aa = {
     track: function(event, properties) {
       queue.push({
@@ -216,6 +204,39 @@
       return assigned;
     }
   };
+
+  // --- Declarative experiments ---
+  function applyDeclarativeExperiments() {
+    var els = document.querySelectorAll('[data-aa-experiment]');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var name = el.getAttribute('data-aa-experiment');
+      var variant = aa.experiment(name);
+      if (variant) {
+        var attr = el.getAttribute('data-aa-variant-' + variant.toLowerCase());
+        if (attr !== null) {
+          el.textContent = attr;
+        }
+      }
+    }
+    document.documentElement.classList.remove('aa-loading');
+  }
+
+  (function loadExperimentConfig() {
+    if (!TOKEN) { configLoaded = true; applyDeclarativeExperiments(); return; }
+    var configUrl = ENDPOINT.replace('/track', '/experiments/config') + '?token=' + TOKEN;
+    fetch(configUrl, { credentials: 'omit' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        experimentConfig = data.experiments || [];
+        configLoaded = true;
+        applyDeclarativeExperiments();
+      })
+      .catch(function() {
+        configLoaded = true;
+        applyDeclarativeExperiments();
+      });
+  })();
 
   // --- SPA route tracking ---
   var lastPath = location.pathname + location.search;
