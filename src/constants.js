@@ -21,7 +21,7 @@ export const FILTER_OPS = Object.freeze({
   eq: '=', neq: '!=', gt: '>', lt: '<', gte: '>=', lte: '<=',
 });
 
-export const FILTERABLE_FIELDS = Object.freeze(['event', 'user_id', 'date']);
+export const FILTERABLE_FIELDS = Object.freeze(['event', 'user_id', 'date', 'country']);
 
 export const ALLOWED_ORDER_BY = Object.freeze(['event_count', 'unique_users', 'date', 'event']);
 
