@@ -215,7 +215,7 @@
       if (variant) {
         var attr = el.getAttribute('data-aa-variant-' + variant.toLowerCase());
         if (attr !== null) {
-          el.textContent = attr;
+          el.innerHTML = attr;
         }
       }
     }
