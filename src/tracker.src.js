@@ -135,7 +135,6 @@
     }
     fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: data,
       keepalive: true,
       credentials: 'omit'
@@ -187,7 +186,6 @@
   // --- Experiments ---
   var experimentCache = {};
   var experimentConfig = null;
-  var configLoaded = false;
 
   var aa = {
     track: function(event, properties) {
@@ -269,17 +267,15 @@
   }
 
   (function loadExperimentConfig() {
-    if (!TOKEN) { configLoaded = true; applyDeclarativeExperiments(); return; }
+    if (!TOKEN) { applyDeclarativeExperiments(); return; }
     var configUrl = ENDPOINT.replace('/track', '/experiments/config') + '?token=' + TOKEN;
     fetch(configUrl, { credentials: 'omit' })
       .then(function(r) { return r.json(); })
       .then(function(data) {
         experimentConfig = data.experiments || [];
-        configLoaded = true;
         applyDeclarativeExperiments();
       })
       .catch(function() {
-        configLoaded = true;
         applyDeclarativeExperiments();
       });
   })();
