@@ -70,6 +70,7 @@ const ROUTES = {
   'GET /pages':               withProjectRead(handlePages),
   'GET /sessions/distribution': withProjectRead(handleSessionDistribution),
   'GET /heatmap':             withProjectRead(handleHeatmap),
+  'GET /retention':           withProjectRead(handleRetention),
 };
 
 /**
@@ -274,4 +275,14 @@ async function handleHeatmap({ url, db, project }) {
   const since = url.searchParams.get('since') || undefined;
   const result = await db.getHeatmap({ project, since });
   return { response: json({ project, ...result }) };
+}
+
+async function handleRetention({ url, db, project }) {
+  const period = url.searchParams.get('period') || 'week';
+  const cohorts = parseInt(url.searchParams.get('cohorts'), 10) || 8;
+  const event = url.searchParams.get('event') || undefined;
+  const returning_event = url.searchParams.get('returning_event') || undefined;
+  const since = url.searchParams.get('since') || undefined;
+  const result = await db.getRetention({ project, period, cohorts, event, returning_event, since });
+  return { response: json({ project, period, ...result }) };
 }
