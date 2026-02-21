@@ -43,7 +43,7 @@
   function getAnonId() {
     var id = adoptCrossSubdomainId() || localStorage.getItem('aa_uid');
     if (!id) {
-      id = 'anon_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+      id = 'anon_' + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
       localStorage.setItem('aa_uid', id);
     }
     return id;
@@ -72,7 +72,7 @@
     var lastActivity = parseInt(sessionStorage.getItem('aa_last_activity') || '0', 10);
     var sid = sessionStorage.getItem('aa_sid');
     if (!sid || (lastActivity && (now - lastActivity) > SESSION_TIMEOUT)) {
-      sid = 'sess_' + Math.random().toString(36).substr(2, 9) + now.toString(36);
+      sid = 'sess_' + Math.random().toString(36).slice(2, 11) + now.toString(36);
       sessionStorage.setItem('aa_sid', sid);
     }
     sessionStorage.setItem('aa_last_activity', String(now));
@@ -177,9 +177,9 @@
       device: dev.device
     };
     // Merge UTM
-    for (var k in utm) p[k] = utm[k];
+    for (var k in utm) { if (utm.hasOwnProperty(k)) p[k] = utm[k]; }
     // Merge extra
-    if (extra) for (var k2 in extra) p[k2] = extra[k2];
+    if (extra) for (var k2 in extra) { if (extra.hasOwnProperty(k2)) p[k2] = extra[k2]; }
     return p;
   }
 
@@ -232,7 +232,7 @@
       var hash = 0;
       for (var j = 0; j < str.length; j++) {
         hash = ((hash << 5) - hash) + str.charCodeAt(j);
-        hash = hash & hash;
+        hash |= 0;
       }
       var bucket = Math.abs(hash) % 100;
 
