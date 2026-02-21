@@ -7,10 +7,41 @@
     : '/track';
   var PROJECT = (script && script.dataset.project) || 'default';
   var TOKEN = (script && script.dataset.token) || null;
+  var LINK_DOMAINS = (script && script.getAttribute('data-link-domains')) || null;
+
+  // --- Cross-subdomain identity ---
+  var linkedDomains = null;
+  if (LINK_DOMAINS) {
+    linkedDomains = LINK_DOMAINS.split(',').map(function(d) { return d.trim().toLowerCase(); });
+  }
+
+  function isSiblingDomain(hostname) {
+    if (!linkedDomains || hostname === location.hostname) return false;
+    for (var i = 0; i < linkedDomains.length; i++) {
+      var d = linkedDomains[i];
+      if (hostname === d || hostname.endsWith('.' + d)) return true;
+    }
+    return false;
+  }
+
+  function adoptCrossSubdomainId() {
+    if (!linkedDomains) return null;
+    var p = new URLSearchParams(location.search);
+    var id = p.get('_aa');
+    if (id) {
+      localStorage.setItem('aa_uid', id);
+      // Strip _aa from URL
+      p.delete('_aa');
+      var clean = location.pathname + (p.toString() ? '?' + p.toString() : '') + location.hash;
+      history.replaceState(null, '', clean);
+      return id;
+    }
+    return null;
+  }
 
   // --- Anon ID ---
   function getAnonId() {
-    var id = localStorage.getItem('aa_uid');
+    var id = adoptCrossSubdomainId() || localStorage.getItem('aa_uid');
     if (!id) {
       id = 'anon_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
       localStorage.setItem('aa_uid', id);
@@ -18,6 +49,21 @@
     return id;
   }
   var userId = getAnonId();
+
+  // --- Cross-subdomain link decoration ---
+  if (linkedDomains) {
+    document.addEventListener('click', function(e) {
+      var a = e.target.closest ? e.target.closest('a') : null;
+      if (!a || !a.href) return;
+      try {
+        var url = new URL(a.href);
+        if (isSiblingDomain(url.hostname)) {
+          url.searchParams.set('_aa', userId);
+          a.href = url.toString();
+        }
+      } catch(_) {}
+    });
+  }
 
   // --- Session ID (30min inactivity timeout) ---
   var SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
