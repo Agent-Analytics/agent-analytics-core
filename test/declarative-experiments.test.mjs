@@ -33,9 +33,9 @@ function assignVariant(bucket, variants) {
 }
 
 /**
- * Simulates aa.experiment() — returns assigned variant from config, or null.
+ * Simulates aa.experiment() with URL param forcing — must match tracker.src.js.
  */
-function experiment(name, experimentConfig, experimentCache, userId) {
+function experiment(name, experimentConfig, experimentCache, userId, searchString) {
   if (experimentCache[name] !== undefined) return experimentCache[name];
 
   let config = null;
@@ -45,6 +45,20 @@ function experiment(name, experimentConfig, experimentCache, userId) {
     }
   }
   if (!config) return null;
+
+  // URL param override
+  if (searchString) {
+    const params = new URLSearchParams(searchString);
+    const urlForced = params.get('aa_variant_' + name);
+    if (urlForced) {
+      for (const v of config.variants) {
+        if (v.key === urlForced) {
+          experimentCache[name] = urlForced;
+          return urlForced;
+        }
+      }
+    }
+  }
 
   const bucket = djb2Hash(name + '.' + userId);
   const assigned = assignVariant(bucket, config.variants);
@@ -58,13 +72,13 @@ function experiment(name, experimentConfig, experimentCache, userId) {
  * Elements: array of { experiment, variants: { key: text }, content, textContent (output) }
  * Returns: elements with textContent updated.
  */
-function applyDeclarativeExperiments(elements, experimentConfig, userId) {
+function applyDeclarativeExperiments(elements, experimentConfig, userId, searchString) {
   const cache = {};
   const exposures = [];
 
   for (const el of elements) {
     const name = el.experiment;
-    const variant = experiment(name, experimentConfig, cache, userId);
+    const variant = experiment(name, experimentConfig, cache, userId, searchString);
     if (variant) {
       const replacement = el.variants[variant.toLowerCase()];
       if (replacement !== undefined) {
@@ -220,5 +234,38 @@ describe('applyDeclarativeExperiments', () => {
     );
     assert.equal(result.aaLoadingRemoved, true);
     assert.equal(result.elements[0].textContent, 'Original');
+  });
+
+  test('URL param forces variant in declarative experiment', () => {
+    const elements = [
+      { experiment: 'hero_text', variants: { b: 'Forced headline!' }, textContent: 'Original headline' },
+    ];
+
+    // Force variant 'b' via URL param, regardless of userId hash
+    const result = applyDeclarativeExperiments(elements, config, 'any_user', '?aa_variant_hero_text=b');
+    assert.equal(result.elements[0].textContent, 'Forced headline!');
+    assert.equal(result.exposures[0].variant, 'b');
+  });
+
+  test('URL param forcing does not affect other experiments', () => {
+    const elements = [
+      { experiment: 'hero_text', variants: { b: 'Forced headline!' }, textContent: 'Original headline' },
+      { experiment: 'cta_test', variants: { b: 'CTA B', c: 'CTA C' }, textContent: 'CTA Original' },
+    ];
+
+    // Force only hero_text, cta_test should use normal hash
+    const result = applyDeclarativeExperiments(elements, config, 'user_42', '?aa_variant_hero_text=b');
+    assert.equal(result.elements[0].textContent, 'Forced headline!');
+
+    // cta_test should be hash-assigned
+    const expectedBucket = djb2Hash('cta_test.user_42');
+    const expectedVariant = assignVariant(expectedBucket, config[1].variants);
+    if (expectedVariant === 'control') {
+      assert.equal(result.elements[1].textContent, 'CTA Original');
+    } else if (expectedVariant === 'b') {
+      assert.equal(result.elements[1].textContent, 'CTA B');
+    } else {
+      assert.equal(result.elements[1].textContent, 'CTA C');
+    }
   });
 });

@@ -228,6 +228,19 @@
 
       if (!config) return null;
 
+      // URL param override: ?aa_variant_<name>=<variant>
+      var urlForced = new URLSearchParams(location.search).get('aa_variant_' + name);
+      if (urlForced) {
+        for (var vi = 0; vi < config.variants.length; vi++) {
+          if (config.variants[vi].key === urlForced) {
+            experimentCache[name] = urlForced;
+            aa.track('$experiment_exposure', { experiment: name, variant: urlForced, forced: true });
+            return urlForced;
+          }
+        }
+        // Invalid variant — fall through to normal hash
+      }
+
       var str = name + '.' + userId;
       var hash = 0;
       for (var j = 0; j < str.length; j++) {

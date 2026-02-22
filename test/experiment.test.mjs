@@ -134,3 +134,132 @@ describe('variant weight assignment', () => {
     assert.equal(bCount, 20);
   });
 });
+
+/**
+ * Simulates experiment() with URL param forcing — must match tracker.src.js.
+ *
+ * @param {string} name - experiment name
+ * @param {object[]} experimentConfig - array of { key, variants: [{ key, weight }] }
+ * @param {object} cache - experimentCache object (mutated)
+ * @param {string} userId
+ * @param {string|null} searchString - simulated location.search (e.g. '?aa_variant_hero=control')
+ * @param {string[]} [inlineVariants] - optional inline variant keys (for aa.experiment('name', ['a','b']))
+ * @returns {{ variant: string|null, exposure: object|null }}
+ */
+function experimentWithForcing(name, experimentConfig, cache, userId, searchString, inlineVariants) {
+  if (cache[name] !== undefined) return { variant: cache[name], exposure: null };
+
+  // Resolve config
+  let config = null;
+  if (experimentConfig) {
+    for (const exp of experimentConfig) {
+      if (exp.key === name) { config = exp; break; }
+    }
+  }
+  if (!config && inlineVariants) {
+    const w = Math.floor(100 / inlineVariants.length);
+    const remainder = 100 - (w * inlineVariants.length);
+    config = { key: name, variants: inlineVariants.map((v, idx) => ({ key: v, weight: w + (idx === 0 ? remainder : 0) })) };
+  }
+  if (!config) return { variant: null, exposure: null };
+
+  // URL param override
+  if (searchString) {
+    const params = new URLSearchParams(searchString);
+    const urlForced = params.get('aa_variant_' + name);
+    if (urlForced) {
+      for (const v of config.variants) {
+        if (v.key === urlForced) {
+          cache[name] = urlForced;
+          return { variant: urlForced, exposure: { experiment: name, variant: urlForced, forced: true } };
+        }
+      }
+      // Invalid variant — fall through to hash
+    }
+  }
+
+  // Normal hash assignment
+  const bucket = djb2Hash(name + '.' + userId);
+  const assigned = assignVariant(bucket, config.variants);
+  cache[name] = assigned;
+  return { variant: assigned, exposure: { experiment: name, variant: assigned } };
+}
+
+describe('URL param variant forcing', () => {
+  const config = [
+    { key: 'hero_headline', variants: [{ key: 'control', weight: 50 }, { key: 'new_copy', weight: 50 }] },
+    { key: 'cta_test', variants: [{ key: 'control', weight: 34 }, { key: 'b', weight: 33 }, { key: 'c', weight: 33 }] },
+  ];
+
+  test('valid forced variant overrides hash assignment', () => {
+    const cache = {};
+    // Force 'new_copy' regardless of what hash would assign
+    const result = experimentWithForcing('hero_headline', config, cache, 'user_999', '?aa_variant_hero_headline=new_copy');
+    assert.equal(result.variant, 'new_copy');
+  });
+
+  test('forced variant is cached', () => {
+    const cache = {};
+    experimentWithForcing('hero_headline', config, cache, 'user_1', '?aa_variant_hero_headline=control');
+    assert.equal(cache['hero_headline'], 'control');
+
+    // Second call returns from cache (no exposure tracked)
+    const result2 = experimentWithForcing('hero_headline', config, cache, 'user_1', '?aa_variant_hero_headline=control');
+    assert.equal(result2.variant, 'control');
+    assert.equal(result2.exposure, null); // from cache, no new exposure
+  });
+
+  test('exposure event includes forced: true', () => {
+    const cache = {};
+    const result = experimentWithForcing('hero_headline', config, cache, 'user_1', '?aa_variant_hero_headline=new_copy');
+    assert.deepEqual(result.exposure, { experiment: 'hero_headline', variant: 'new_copy', forced: true });
+  });
+
+  test('normal hash exposure does NOT include forced property', () => {
+    const cache = {};
+    const result = experimentWithForcing('hero_headline', config, cache, 'user_1', null);
+    assert.ok(result.exposure);
+    assert.equal(result.exposure.forced, undefined);
+  });
+
+  test('invalid forced variant falls through to hash assignment', () => {
+    const cache = {};
+    const result = experimentWithForcing('hero_headline', config, cache, 'user_1', '?aa_variant_hero_headline=garbage');
+    // Should get normal hash-assigned variant, not 'garbage'
+    const expectedBucket = djb2Hash('hero_headline.user_1');
+    const expectedVariant = assignVariant(expectedBucket, config[0].variants);
+    assert.equal(result.variant, expectedVariant);
+    assert.equal(result.exposure.forced, undefined);
+  });
+
+  test('no URL param → normal hash behavior', () => {
+    const cache = {};
+    const result = experimentWithForcing('hero_headline', config, cache, 'user_42', '');
+    const expectedBucket = djb2Hash('hero_headline.user_42');
+    const expectedVariant = assignVariant(expectedBucket, config[0].variants);
+    assert.equal(result.variant, expectedVariant);
+  });
+
+  test('URL param for different experiment does not affect this one', () => {
+    const cache = {};
+    // URL has param for cta_test, not hero_headline
+    const result = experimentWithForcing('hero_headline', config, cache, 'user_1', '?aa_variant_cta_test=b');
+    const expectedBucket = djb2Hash('hero_headline.user_1');
+    const expectedVariant = assignVariant(expectedBucket, config[0].variants);
+    assert.equal(result.variant, expectedVariant);
+  });
+
+  test('forcing works with inline variants (no server config)', () => {
+    const cache = {};
+    const result = experimentWithForcing('local_test', null, cache, 'user_1', '?aa_variant_local_test=b', ['a', 'b']);
+    assert.equal(result.variant, 'b');
+    assert.equal(result.exposure.forced, true);
+  });
+
+  test('forcing works with multi-variant experiment', () => {
+    const cache = {};
+    const result = experimentWithForcing('cta_test', config, cache, 'user_1', '?aa_variant_cta_test=c');
+    assert.equal(result.variant, 'c');
+    assert.equal(result.exposure.forced, true);
+  });
+});
