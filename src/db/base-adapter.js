@@ -288,12 +288,20 @@ export class BaseAdapter {
         if (!sqlOp) throw new AnalyticsError(ERROR_CODES.INVALID_FILTER_OP, `invalid filter op: ${f.op}. allowed: ${Object.keys(FILTER_OPS).join(', ')}`, 400);
 
         if (FILTERABLE_FIELDS.includes(f.field)) {
-          whereParts.push(`${f.field} ${sqlOp} ?`);
+          if (f.op === 'contains') {
+            whereParts.push(`${f.field} LIKE '%' || ? || '%'`);
+          } else {
+            whereParts.push(`${f.field} ${sqlOp} ?`);
+          }
           params.push(f.value);
         } else if (f.field.startsWith('properties.')) {
           const propKey = f.field.replace('properties.', '');
           validatePropertyKey(propKey);
-          whereParts.push(`json_extract(properties, '$.${propKey}') ${sqlOp} ?`);
+          if (f.op === 'contains') {
+            whereParts.push(`json_extract(properties, '$.${propKey}') LIKE '%' || ? || '%'`);
+          } else {
+            whereParts.push(`json_extract(properties, '$.${propKey}') ${sqlOp} ?`);
+          }
           params.push(f.value);
         }
       }

@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS events (
   user_id TEXT,
   session_id TEXT,
   timestamp INTEGER NOT NULL,
-  date TEXT NOT NULL
+  date TEXT NOT NULL,
+  country TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_project_date ON events(project_id, date);

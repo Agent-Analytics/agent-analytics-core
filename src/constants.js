@@ -13,17 +13,17 @@ export const METRICS = Object.freeze({
 export const ALLOWED_METRICS = Object.freeze(Object.values(METRICS));
 
 export const GROUP_BY_FIELDS = Object.freeze({
-  EVENT: 'event', DATE: 'date', USER_ID: 'user_id', SESSION_ID: 'session_id',
+  EVENT: 'event', DATE: 'date', USER_ID: 'user_id', SESSION_ID: 'session_id', COUNTRY: 'country',
 });
 export const ALLOWED_GROUP_BY = Object.freeze(Object.values(GROUP_BY_FIELDS));
 
 export const FILTER_OPS = Object.freeze({
-  eq: '=', neq: '!=', gt: '>', lt: '<', gte: '>=', lte: '<=',
+  eq: '=', neq: '!=', gt: '>', lt: '<', gte: '>=', lte: '<=', contains: 'LIKE',
 });
 
-export const FILTERABLE_FIELDS = Object.freeze(['event', 'user_id', 'date', 'country']);
+export const FILTERABLE_FIELDS = Object.freeze(['event', 'user_id', 'date', 'country', 'session_id', 'timestamp']);
 
-export const ALLOWED_ORDER_BY = Object.freeze(['event_count', 'unique_users', 'date', 'event']);
+export const ALLOWED_ORDER_BY = Object.freeze(['event_count', 'unique_users', 'session_count', 'date', 'event']);
 
 // Analytics endpoint constants
 export const VALID_PERIODS = Object.freeze(['1d', '7d', '14d', '30d', '90d']);

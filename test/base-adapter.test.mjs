@@ -386,4 +386,113 @@ describe('BaseAdapter contract', () => {
     assert.ok(result.properties.some(p => p.key === 'button' && p.event === 'click'));
     assert.ok(result.properties.some(p => p.key === 'path' && p.event === 'page_view'));
   });
+
+  // --- query: contains filter ---
+
+  test('query supports contains filter op', async () => {
+    await adapter.trackEvent({ project: 'p', event: 'page_view', user_id: 'u1', timestamp: Date.now() });
+    await adapter.trackEvent({ project: 'p', event: 'page_exit', user_id: 'u1', timestamp: Date.now() });
+    await adapter.trackEvent({ project: 'p', event: 'click', user_id: 'u2', timestamp: Date.now() });
+
+    const result = await adapter.query({
+      project: 'p',
+      filters: [{ field: 'event', op: 'contains', value: 'page' }],
+    });
+    assert.equal(result.rows[0].event_count, 2);
+  });
+
+  test('query supports contains filter on properties', async () => {
+    await adapter.trackEvent({ project: 'p', event: 'click', properties: { path: '/blog/post-1' }, user_id: 'u1', timestamp: Date.now() });
+    await adapter.trackEvent({ project: 'p', event: 'click', properties: { path: '/pricing' }, user_id: 'u2', timestamp: Date.now() });
+
+    const result = await adapter.query({
+      project: 'p',
+      filters: [{ field: 'properties.path', op: 'contains', value: 'blog' }],
+    });
+    assert.equal(result.rows[0].event_count, 1);
+  });
+
+  // --- query: session_id and timestamp as filterable fields ---
+
+  test('query accepts session_id as filter field', async () => {
+    await adapter.trackEvent({ project: 'p', event: 'click', session_id: 'sess-abc', user_id: 'u1', timestamp: Date.now(), properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'click', session_id: 'sess-xyz', user_id: 'u2', timestamp: Date.now(), properties: { path: '/' } });
+
+    const result = await adapter.query({
+      project: 'p',
+      filters: [{ field: 'session_id', op: 'eq', value: 'sess-abc' }],
+    });
+    assert.equal(result.rows[0].event_count, 1);
+  });
+
+  test('query accepts timestamp as filter field', async () => {
+    const now = Date.now();
+    const t1 = now - 1000;
+    const t2 = now;
+    await adapter.trackEvent({ project: 'p', event: 'click', user_id: 'u1', timestamp: t1 });
+    await adapter.trackEvent({ project: 'p', event: 'click', user_id: 'u2', timestamp: t2 });
+
+    const result = await adapter.query({
+      project: 'p',
+      filters: [{ field: 'timestamp', op: 'gte', value: t2 }],
+    });
+    assert.equal(result.rows[0].event_count, 1);
+  });
+
+  // --- query: country in group_by ---
+
+  test('query supports country in group_by', async () => {
+    // Insert events with country directly into DB
+    const now = Date.now();
+    const date = new Date(now).toISOString().split('T')[0];
+    adapter.db.prepare(
+      `INSERT INTO events (id, project_id, event, user_id, timestamp, date, country) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run('e1', 'p', 'click', 'u1', now, date, 'US');
+    adapter.db.prepare(
+      `INSERT INTO events (id, project_id, event, user_id, timestamp, date, country) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run('e2', 'p', 'click', 'u2', now, date, 'US');
+    adapter.db.prepare(
+      `INSERT INTO events (id, project_id, event, user_id, timestamp, date, country) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run('e3', 'p', 'click', 'u3', now, date, 'DE');
+
+    const result = await adapter.query({
+      project: 'p',
+      metrics: ['event_count'],
+      group_by: ['country'],
+    });
+    assert.ok(result.rows.length >= 2);
+    const usRow = result.rows.find(r => r.country === 'US');
+    assert.equal(usRow.event_count, 2);
+    const deRow = result.rows.find(r => r.country === 'DE');
+    assert.equal(deRow.event_count, 1);
+  });
+
+  // --- query: session_count in order_by ---
+
+  test('query supports session_count in order_by', async () => {
+    await adapter.trackEvent({ project: 'p', event: 'click', session_id: 'sA', user_id: 'u1', timestamp: Date.now(), properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'click', session_id: 'sB', user_id: 'u1', timestamp: Date.now(), properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'page_view', session_id: 'sC', user_id: 'u2', timestamp: Date.now(), properties: { path: '/' } });
+
+    const result = await adapter.query({
+      project: 'p',
+      metrics: ['session_count'],
+      group_by: ['event'],
+      order_by: 'session_count',
+      order: 'desc',
+    });
+    assert.ok(result.rows.length >= 2);
+    // click has 2 sessions, page_view has 1
+    assert.equal(result.rows[0].event, 'click');
+    assert.equal(result.rows[0].session_count, 2);
+  });
+
+  // --- query: invalid contains still validates ---
+
+  test('query rejects invalid filter op', async () => {
+    await assert.rejects(
+      () => adapter.query({ project: 'p', filters: [{ field: 'event', op: 'like', value: 'x' }] }),
+      /invalid filter op/,
+    );
+  });
 });
