@@ -1,6 +1,17 @@
 (function() {
   'use strict';
 
+  // Skip real tracking on localhost — log to console instead
+  if (/^localhost$|^127(\.\d+){3}$/.test(location.hostname)) {
+    window.aa = {
+      track: function(e, p) { console.log('[aa-dev] track', e, p || {}); },
+      identify: function(id) { console.log('[aa-dev] identify', id); },
+      page: function(n) { console.log('[aa-dev] page', n || document.title); },
+      experiment: function() { return null; }
+    };
+    return;
+  }
+
   var script = document.currentScript;
   var ENDPOINT = script && script.src
     ? new URL(script.src).origin + '/track'
