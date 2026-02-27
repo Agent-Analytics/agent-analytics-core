@@ -58,6 +58,7 @@ function withProjectRead(fn) {
 const ROUTES = {
   'POST /track':              withWriteAuth(handleTrack),
   'POST /track/batch':        withWriteAuth(handleTrackBatch),
+  'POST /identify':           withWriteAuth(handleIdentify),
   'GET /projects':            withReadAuth(handleListProjects),
   'GET /stats':               withProjectRead(handleStats),
   'GET /sessions':            withProjectRead(handleSessions),
@@ -170,6 +171,26 @@ async function handleTrackBatch({ body, db, useQueue }) {
     .catch(err => console.error('Batch write failed:', err));
 
   return { response: json({ ok: true, count: events.length }), writeOps: [writeOp] };
+}
+
+async function handleIdentify({ body, db }) {
+  const { project, previous_id, user_id } = body;
+
+  if (!project) {
+    return { response: json(errorResponse(ERROR_CODES.MISSING_FIELDS, 'project required'), 400) };
+  }
+  if (!previous_id || typeof previous_id !== 'string' || previous_id.length > 256) {
+    return { response: json(errorResponse(ERROR_CODES.MISSING_FIELDS, 'previous_id must be a non-empty string (max 256 chars)'), 400) };
+  }
+  if (!user_id || typeof user_id !== 'string' || user_id.length > 256) {
+    return { response: json(errorResponse(ERROR_CODES.MISSING_FIELDS, 'user_id must be a non-empty string (max 256 chars)'), 400) };
+  }
+  if (previous_id === user_id) {
+    return { response: json(errorResponse(ERROR_CODES.MISSING_FIELDS, 'previous_id and user_id must differ'), 400) };
+  }
+
+  await db.identifyUser({ project, previous_id, canonical_id: user_id });
+  return { response: json({ ok: true }) };
 }
 
 async function handleListProjects({ db }) {

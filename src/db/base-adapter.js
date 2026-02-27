@@ -616,6 +616,30 @@ export class BaseAdapter {
     return { distribution, median_bucket: medianBucket, engaged_pct: engagedPct };
   }
 
+  async identifyUser({ project, previous_id, canonical_id }) {
+    // Insert or update the identity mapping
+    await this._run(
+      `INSERT INTO identity_map (previous_id, canonical_id, project_id, created_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(previous_id, project_id) DO UPDATE SET
+         canonical_id = excluded.canonical_id,
+         created_at = excluded.created_at`,
+      [previous_id, canonical_id, project, Date.now()],
+    );
+
+    // Backfill events
+    await this._run(
+      `UPDATE events SET user_id = ? WHERE user_id = ? AND project_id = ?`,
+      [canonical_id, previous_id, project],
+    );
+
+    // Backfill sessions
+    await this._run(
+      `UPDATE sessions SET user_id = ? WHERE user_id = ? AND project_id = ?`,
+      [canonical_id, previous_id, project],
+    );
+  }
+
   async getHeatmap({ project, since }) {
     const fromDate = parseSince(since);
 

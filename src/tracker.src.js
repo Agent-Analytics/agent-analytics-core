@@ -213,8 +213,18 @@
     },
 
     identify: function(id) {
+      var previousId = userId;
       userId = id;
       localStorage.setItem('aa_uid', id);
+      flush();
+      if (previousId && previousId !== id && TOKEN) {
+        var identifyUrl = ENDPOINT.replace('/track', '/identify');
+        send(identifyUrl, JSON.stringify({
+          token: TOKEN,
+          previous_id: previousId,
+          user_id: id
+        }));
+      }
     },
 
     page: function(name) {
