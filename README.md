@@ -67,7 +67,7 @@ export default {
 ## Client-side tracking
 
 ```html
-<script src="https://your-server.com/tracker.js" data-project="my-site" data-token="YOUR_TOKEN"></script>
+<script defer src="https://your-server.com/tracker.js" data-project="my-site" data-token="YOUR_TOKEN"></script>
 ```
 
 Auto-tracks page views (including SPA navigations via patched `pushState`/`replaceState`), with URL, referrer, screen size, browser, OS, device type, and UTM params. Events are batched and flushed every 5s, or immediately on page hide via `sendBeacon`.
