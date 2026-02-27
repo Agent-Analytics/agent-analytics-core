@@ -72,6 +72,8 @@ export default {
 
 Auto-tracks page views (including SPA navigations via patched `pushState`/`replaceState`), with URL, referrer, screen size, browser, OS, device type, and UTM params. Events are batched and flushed every 5s, or immediately on page hide via `sendBeacon`.
 
+On `localhost` and `127.0.0.1`, the tracker skips all network requests and logs events to the browser console instead (prefixed `[aa-dev]`), so development traffic never pollutes production data.
+
 ```js
 window.aa.track('signup', { plan: 'pro' });
 window.aa.identify('user_123');
