@@ -102,7 +102,7 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
     if (path === '/tracker.js') {
       return {
         response: new Response(TRACKER_JS, {
-          headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=3600', ...CORS_HEADERS },
+          headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=3600, s-maxage=604800', ...CORS_HEADERS },
         }),
       };
     }
