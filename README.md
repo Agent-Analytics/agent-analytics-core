@@ -80,6 +80,27 @@ window.aa.identify('user_123');
 window.aa.page('Dashboard');
 ```
 
+### Declarative event tracking
+
+Track clicks without writing JavaScript — add `data-aa-event` to any HTML element:
+
+```html
+<button data-aa-event="cta_click" data-aa-event-id="hero_signup">Get Started</button>
+```
+
+When clicked, this fires a `cta_click` event with `{ id: "hero_signup" }`. Add properties with `data-aa-event-*` attributes. Use this for simple click tracking; use `window.aa.track()` for events triggered by non-click interactions or when properties need to be computed dynamically.
+
+### Script attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `data-project` | Project name (required) |
+| `data-token` | Project token `aat_*` (required) |
+| `data-link-domains` | Enable cross-subdomain identity linking |
+| `data-do-not-track` | Set to `"true"` to honor the browser's DNT signal |
+
+Set `localStorage.setItem('aa_disabled', 'true')` to disable tracking entirely (useful for internal teams or opt-out flows).
+
 ## Querying
 
 All read endpoints require an API key via `X-API-Key` header or `?key=` param.

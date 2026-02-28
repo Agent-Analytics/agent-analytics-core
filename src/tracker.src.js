@@ -18,6 +18,14 @@
     : '/track';
   var PROJECT = (script && script.dataset.project) || 'default';
   var TOKEN = (script && script.dataset.token) || null;
+
+  // --- DNT respect (opt-in) ---
+  var RESPECT_DNT = script && script.getAttribute('data-do-not-track') === 'true';
+  if (RESPECT_DNT && navigator.doNotTrack === '1') return;
+
+  // --- Client-side disable flag ---
+  if (localStorage.getItem('aa_disabled') === 'true') return;
+
   var LINK_DOMAINS = (script && script.getAttribute('data-link-domains')) || null;
 
   // --- Cross-subdomain identity ---
@@ -333,6 +341,23 @@
       onRoute();
       return r;
     };
+  });
+
+  // --- Declarative event tracking ---
+  document.addEventListener('click', function(e) {
+    var el = e.target.closest ? e.target.closest('[data-aa-event]') : null;
+    if (!el) return;
+    var event = el.getAttribute('data-aa-event');
+    if (!event) return;
+    var props = {};
+    var attrs = el.attributes;
+    for (var i = 0; i < attrs.length; i++) {
+      var name = attrs[i].name;
+      if (name.startsWith('data-aa-event-')) {
+        props[name.slice(14)] = attrs[i].value;
+      }
+    }
+    aa.track(event, props);
   });
 
   // Auto track initial page view
