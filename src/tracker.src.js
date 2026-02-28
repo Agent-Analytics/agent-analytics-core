@@ -29,6 +29,7 @@
   var LINK_DOMAINS = (script && script.getAttribute('data-link-domains')) || null;
   var TRACK_OUTGOING = script && script.getAttribute('data-track-outgoing') === 'true';
   var HEARTBEAT = script && script.getAttribute('data-heartbeat');
+  var TRACK_ERRORS = script && script.getAttribute('data-track-errors') === 'true';
 
   // --- Cross-subdomain identity ---
   var linkedDomains = null;
@@ -327,10 +328,12 @@
   // --- SPA route tracking ---
   var lastPath = location.pathname + location.search;
   var _flushTimeOnPage = null; // set by heartbeat if enabled
+  var _resetErrorTracking = null; // set by error tracking if enabled
   function onRoute() {
     var cur = location.pathname + location.search;
     if (cur !== lastPath) {
       if (_flushTimeOnPage) _flushTimeOnPage();
+      if (_resetErrorTracking) _resetErrorTracking();
       lastPath = cur;
       utm = getUtm(); // re-parse UTM on navigation
       aa.page();
@@ -379,6 +382,44 @@
           });
         }
       } catch(_) {}
+    });
+  }
+
+  // --- JS error tracking ---
+  if (TRACK_ERRORS) {
+    var errSeen = {};
+    var errCount = 0;
+    var ERR_CAP = 5;
+
+    _resetErrorTracking = function() { errSeen = {}; errCount = 0; };
+
+    window.addEventListener('error', function(e) {
+      if (errCount >= ERR_CAP) return;
+      var key = (e.message || '') + '|' + (e.filename || '') + '|' + (e.lineno || 0);
+      if (errSeen[key]) return;
+      errSeen[key] = 1;
+      errCount++;
+      aa.track('$error', {
+        message: (e.message || '').slice(0, 500),
+        source: e.filename || '',
+        line: e.lineno || 0,
+        col: e.colno || 0
+      });
+    });
+
+    window.addEventListener('unhandledrejection', function(e) {
+      if (errCount >= ERR_CAP) return;
+      var msg = e.reason instanceof Error ? e.reason.message : String(e.reason || '');
+      var key = msg + '||0';
+      if (errSeen[key]) return;
+      errSeen[key] = 1;
+      errCount++;
+      aa.track('$error', {
+        message: msg.slice(0, 500),
+        source: '',
+        line: 0,
+        col: 0
+      });
     });
   }
 
