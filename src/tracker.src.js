@@ -326,9 +326,11 @@
 
   // --- SPA route tracking ---
   var lastPath = location.pathname + location.search;
+  var _flushTimeOnPage = null; // set by heartbeat if enabled
   function onRoute() {
     var cur = location.pathname + location.search;
     if (cur !== lastPath) {
+      if (_flushTimeOnPage) _flushTimeOnPage();
       lastPath = cur;
       utm = getUtm(); // re-parse UTM on navigation
       aa.page();
@@ -380,34 +382,39 @@
     });
   }
 
-  // --- Heartbeat engagement timer ---
+  // --- Time-on-page engagement tracking ---
   if (HEARTBEAT) {
     var hbInterval = parseInt(HEARTBEAT, 10);
     if (hbInterval > 0) {
-      hbInterval = Math.max(hbInterval, 5);
-      var hbCount = 0;
+      hbInterval = Math.max(hbInterval, 15);
+      var hbSeconds = 0;
       var hbTimer = null;
 
       function hbStart() {
         if (hbTimer) return;
-        hbTimer = setInterval(function() {
-          hbCount++;
-          aa.track('$heartbeat', { count: hbCount });
-        }, hbInterval * 1000);
+        hbTimer = setInterval(function() { hbSeconds += hbInterval; }, hbInterval * 1000);
       }
 
       function hbStop() {
         if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
       }
 
+      function hbFlush() {
+        if (hbSeconds > 0) {
+          aa.track('$time_on_page', { time_on_page: hbSeconds, path: location.pathname });
+          hbSeconds = 0;
+        }
+      }
+
       document.addEventListener('visibilitychange', function() {
         if (document.visibilityState === 'visible') hbStart();
-        else hbStop();
+        else { hbStop(); hbFlush(); }
       });
 
       if (document.visibilityState !== 'hidden') hbStart();
 
-      window.addEventListener('beforeunload', hbStop);
+      window.addEventListener('beforeunload', function() { hbStop(); hbFlush(); });
+      _flushTimeOnPage = function() { hbStop(); hbFlush(); hbStart(); };
     }
   }
 
