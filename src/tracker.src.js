@@ -7,7 +7,8 @@
       track: function(e, p) { console.log('[aa-dev] track', e, p || {}); },
       identify: function(id) { console.log('[aa-dev] identify', id); },
       page: function(n) { console.log('[aa-dev] page', n || document.title); },
-      experiment: function() { return null; }
+      experiment: function() { return null; },
+      set: function(p) { console.log('[aa-dev] set', p || {}); }
     };
     return;
   }
@@ -183,6 +184,9 @@
   });
   window.addEventListener('beforeunload', flush);
 
+  // --- Global sticky properties ---
+  var globalProps = {};
+
   // --- Common properties ---
   function baseProps(extra) {
     var p = {
@@ -200,7 +204,9 @@
     };
     // Merge UTM
     for (var k in utm) { if (utm.hasOwnProperty(k)) p[k] = utm[k]; }
-    // Merge extra
+    // Merge global sticky props
+    for (var k1 in globalProps) { if (globalProps.hasOwnProperty(k1)) p[k1] = globalProps[k1]; }
+    // Merge extra (event-specific overrides global)
     if (extra) for (var k2 in extra) { if (extra.hasOwnProperty(k2)) p[k2] = extra[k2]; }
     return p;
   }
@@ -291,6 +297,16 @@
       experimentCache[name] = assigned;
       aa.track('$experiment_exposure', { experiment: name, variant: assigned });
       return assigned;
+    },
+
+    set: function(props) {
+      if (!props) return;
+      for (var k in props) {
+        if (props.hasOwnProperty(k)) {
+          if (props[k] === null) delete globalProps[k];
+          else globalProps[k] = props[k];
+        }
+      }
     }
   };
 
