@@ -28,6 +28,7 @@
 
   var LINK_DOMAINS = (script && script.getAttribute('data-link-domains')) || null;
   var TRACK_OUTGOING = script && script.getAttribute('data-track-outgoing') === 'true';
+  var HEARTBEAT = script && script.getAttribute('data-heartbeat');
 
   // --- Cross-subdomain identity ---
   var linkedDomains = null;
@@ -377,6 +378,37 @@
         }
       } catch(_) {}
     });
+  }
+
+  // --- Heartbeat engagement timer ---
+  if (HEARTBEAT) {
+    var hbInterval = parseInt(HEARTBEAT, 10);
+    if (hbInterval > 0) {
+      hbInterval = Math.max(hbInterval, 5);
+      var hbCount = 0;
+      var hbTimer = null;
+
+      function hbStart() {
+        if (hbTimer) return;
+        hbTimer = setInterval(function() {
+          hbCount++;
+          aa.track('$heartbeat', { count: hbCount });
+        }, hbInterval * 1000);
+      }
+
+      function hbStop() {
+        if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
+      }
+
+      document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') hbStart();
+        else hbStop();
+      });
+
+      if (document.visibilityState !== 'hidden') hbStart();
+
+      window.addEventListener('beforeunload', hbStop);
+    }
   }
 
   // Auto track initial page view
