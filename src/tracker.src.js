@@ -27,6 +27,7 @@
   if (localStorage.getItem('aa_disabled') === 'true') return;
 
   var LINK_DOMAINS = (script && script.getAttribute('data-link-domains')) || null;
+  var TRACK_OUTGOING = script && script.getAttribute('data-track-outgoing') === 'true';
 
   // --- Cross-subdomain identity ---
   var linkedDomains = null;
@@ -359,6 +360,24 @@
     }
     aa.track(event, props);
   });
+
+  // --- Outgoing link tracking ---
+  if (TRACK_OUTGOING) {
+    document.addEventListener('click', function(e) {
+      var a = e.target.closest ? e.target.closest('a') : null;
+      if (!a || !a.href) return;
+      try {
+        var url = new URL(a.href);
+        if (url.hostname && url.hostname !== location.hostname && url.protocol.startsWith('http')) {
+          aa.track('outgoing_link', {
+            href: a.href,
+            text: (a.textContent || '').trim().slice(0, 200),
+            hostname: url.hostname
+          });
+        }
+      } catch(_) {}
+    });
+  }
 
   // Auto track initial page view
   aa.page();
