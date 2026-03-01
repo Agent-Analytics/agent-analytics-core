@@ -8,7 +8,10 @@
       identify: function(id) { console.log('[aa-dev] identify', id); },
       page: function(n) { console.log('[aa-dev] page', n || document.title); },
       experiment: function() { return null; },
-      set: function(p) { console.log('[aa-dev] set', p || {}); }
+      set: function(p) { console.log('[aa-dev] set', p || {}); },
+      requireConsent: function() { console.log('[aa-dev] requireConsent'); },
+      grantConsent: function() { console.log('[aa-dev] grantConsent'); },
+      revokeConsent: function() { console.log('[aa-dev] revokeConsent'); }
     };
     return;
   }
@@ -31,6 +34,7 @@
   var TRACK_OUTGOING = script && script.getAttribute('data-track-outgoing') === 'true';
   var HEARTBEAT = script && script.getAttribute('data-heartbeat');
   var TRACK_ERRORS = script && script.getAttribute('data-track-errors') === 'true';
+  var REQUIRE_CONSENT = script && script.getAttribute('data-require-consent') === 'true';
 
   // --- Cross-subdomain identity ---
   var linkedDomains = null;
@@ -147,6 +151,10 @@
   }
   dev.device = deviceType();
 
+  // --- Consent management ---
+  var consentRequired = REQUIRE_CONSENT;
+  var consentGranted = REQUIRE_CONSENT ? localStorage.getItem('aa_consent') === 'granted' : false;
+
   // --- Event queue ---
   var queue = [];
   var flushTimer = null;
@@ -165,7 +173,7 @@
   }
 
   function flush() {
-    if (!queue.length) return;
+    if (!queue.length || (consentRequired && !consentGranted)) return;
     var batch = queue.splice(0);
     if (batch.length === 1) {
       send(ENDPOINT, JSON.stringify(batch[0]));
@@ -175,6 +183,7 @@
   }
 
   function scheduleFlush() {
+    if (consentRequired && !consentGranted) return;
     if (!flushTimer) flushTimer = setTimeout(function() { flushTimer = null; flush(); }, FLUSH_INTERVAL);
   }
 
@@ -234,7 +243,7 @@
       userId = id;
       localStorage.setItem('aa_uid', id);
       flush();
-      if (previousId && previousId !== id && TOKEN) {
+      if (previousId && previousId !== id && TOKEN && (!consentRequired || consentGranted)) {
         var identifyUrl = ENDPOINT.replace('/track', '/identify');
         send(identifyUrl, JSON.stringify({
           token: TOKEN,
@@ -307,6 +316,24 @@
           else globalProps[k] = props[k];
         }
       }
+    },
+
+    requireConsent: function() {
+      consentRequired = true;
+      consentGranted = localStorage.getItem('aa_consent') === 'granted';
+    },
+
+    grantConsent: function() {
+      consentGranted = true;
+      localStorage.setItem('aa_consent', 'granted');
+      aa.track('$consent', { action: 'granted' });
+      flush();
+    },
+
+    revokeConsent: function() {
+      consentGranted = false;
+      localStorage.removeItem('aa_consent');
+      queue.length = 0;
     }
   };
 
