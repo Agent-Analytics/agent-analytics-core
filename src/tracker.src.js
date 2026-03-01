@@ -30,6 +30,9 @@
   // --- Client-side disable flag ---
   if (localStorage.getItem('aa_disabled') === 'true') return;
 
+  // --- Skip prerendered pages (Chrome Speculation Rules, <link rel="prerender">) ---
+  if (document.visibilityState === 'prerender') return;
+
   var LINK_DOMAINS = (script && script.getAttribute('data-link-domains')) || null;
   var TRACK_OUTGOING = script && script.getAttribute('data-track-outgoing') === 'true';
   var HEARTBEAT = script && script.getAttribute('data-heartbeat');
