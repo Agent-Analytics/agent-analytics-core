@@ -276,7 +276,7 @@ export class BaseAdapter {
     }
     if (selectParts.length === 0) selectParts.push('COUNT(*) as event_count');
 
-    const fromDate = date_from || parseSince(null);
+    const fromDate = parseSince(date_from);
     const toDate = date_to || today();
     const whereParts = ['project_id = ?', 'date >= ?', 'date <= ?'];
     const params = [project, fromDate, toDate];
