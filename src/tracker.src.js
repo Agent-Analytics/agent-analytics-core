@@ -41,6 +41,9 @@
   var REQUIRE_CONSENT = script && script.getAttribute('data-require-consent') === 'true';
   var TRACK_CLICKS = script && script.getAttribute('data-track-clicks') === 'true';
   var TRACK_VITALS = script && script.getAttribute('data-track-vitals') === 'true';
+  var TRACK_DOWNLOADS = script && script.getAttribute('data-track-downloads') === 'true';
+  var TRACK_FORMS = script && script.getAttribute('data-track-forms') === 'true';
+  var TRACK_404 = script && script.getAttribute('data-track-404') === 'true';
 
   // --- Cross-subdomain identity ---
   var linkedDomains = null;
@@ -436,6 +439,7 @@
   var _resetErrorTracking = null; // set by error tracking if enabled
   var _scanImpressions = null; // set by impression tracking
   var _flushWebVitals = null; // set by web vitals if enabled
+  var _check404 = null; // set by 404 tracking if enabled
   function onRoute() {
     var cur = location.pathname + location.search;
     if (cur !== lastPath) {
@@ -446,6 +450,7 @@
       lastPath = cur;
       utm = getUtm(); // re-parse UTM on navigation
       aa.page();
+      if (_check404) _check404();
     }
   }
   window.addEventListener('popstate', onRoute);
@@ -457,6 +462,19 @@
       onRoute();
       return r;
     };
+  });
+
+  // --- bfcache support ---
+  window.addEventListener('pageshow', function(e) {
+    if (e.persisted) {
+      if (_flushTimeOnPage) _flushTimeOnPage();
+      if (_flushWebVitals) _flushWebVitals();
+      lastPath = location.pathname + location.search;
+      utm = getUtm();
+      aa.page();
+      if (_check404) _check404();
+      if (_scanImpressions) _scanImpressions();
+    }
   });
 
   // --- Declarative event tracking ---
@@ -524,6 +542,74 @@
       }
       aa.track('$click', props);
     });
+  }
+
+  // --- File download tracking ---
+  if (TRACK_DOWNLOADS) {
+    var DL_EXT = /\.(pdf|xlsx?|docx?|txt|rtf|csv|exe|key|pps|pptx?|7z|pkg|rar|gz|zip|avi|mov|mp4|mpeg|wmv|midi|mp3|wav|wma|dmg|iso|msi)$/i;
+    document.addEventListener('click', function(e) {
+      var a = e.target.closest ? e.target.closest('a') : null;
+      if (!a || !a.href) return;
+      if (a.closest && a.closest('[data-aa-event]')) return;
+      try {
+        var url = new URL(a.href);
+        if (!url.protocol.startsWith('http')) return;
+        var path = url.pathname;
+        var m = path.match(DL_EXT);
+        if (m) {
+          aa.track('$download', {
+            href: url.origin + url.pathname,
+            filename: path.split('/').pop(),
+            extension: m[1].toLowerCase()
+          });
+        }
+      } catch(_) {}
+    });
+  }
+
+  // --- Form submission tracking ---
+  if (TRACK_FORMS) {
+    document.addEventListener('submit', function(e) {
+      var form = e.target;
+      if (!form || form.tagName !== 'FORM') return;
+      if (form.getAttribute('data-aa-event')) return;
+      if (!form.hasAttribute('novalidate') && form.checkValidity && !form.checkValidity()) return;
+      aa.track('$form_submit', {
+        id: form.id || '',
+        name: form.getAttribute('name') || '',
+        action: (form.action || '').slice(0, 500),
+        method: (form.method || 'GET').toUpperCase(),
+        classes: (form.className && typeof form.className === 'string' ? form.className : '').slice(0, 200)
+      });
+    }, true);
+  }
+
+  // --- 404 page tracking ---
+  if (TRACK_404) {
+    function check404() {
+      var is404 = false;
+      var meta = document.querySelector('meta[name="aa-status"]');
+      if (meta && meta.content === '404') is404 = true;
+      if (!is404) {
+        try {
+          var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+          if (nav && nav.responseStatus === 404) is404 = true;
+        } catch(_) {}
+      }
+      if (is404) {
+        aa.track('$404', {
+          path: location.pathname,
+          referrer: document.referrer,
+          title: document.title
+        });
+      }
+    }
+    _check404 = check404;
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', check404);
+    } else {
+      setTimeout(check404, 0);
+    }
   }
 
   // --- Content impression tracking ---
