@@ -310,7 +310,8 @@ export class BaseAdapter {
     let sql = `SELECT ${selectParts.join(', ')} FROM events WHERE ${whereParts.join(' AND ')}`;
     if (group_by.length > 0) sql += ` GROUP BY ${group_by.join(', ')}`;
 
-    const orderField = order_by && ALLOWED_ORDER_BY.includes(order_by) ? order_by : (group_by.includes(GROUP_BY_FIELDS.DATE) ? GROUP_BY_FIELDS.DATE : METRICS.EVENT_COUNT);
+    const defaultOrder = group_by.includes(GROUP_BY_FIELDS.DATE) ? GROUP_BY_FIELDS.DATE : metrics[0];
+    const orderField = order_by && ALLOWED_ORDER_BY.includes(order_by) ? order_by : defaultOrder;
     const orderDir = order === 'asc' ? 'ASC' : 'DESC';
     sql += ` ORDER BY ${orderField} ${orderDir}`;
 

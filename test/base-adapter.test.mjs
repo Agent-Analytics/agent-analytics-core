@@ -489,6 +489,29 @@ describe('BaseAdapter contract', () => {
 
   // --- query: invalid contains still validates ---
 
+  test('query with unique_users only does not ORDER BY event_count', async () => {
+    await adapter.trackEvent({ project: 'p', event: 'click', user_id: 'u1', timestamp: Date.now() });
+    await adapter.trackEvent({ project: 'p', event: 'click', user_id: 'u2', timestamp: Date.now() });
+
+    // Should not throw — when metrics=["unique_users"], ORDER BY should use unique_users
+    const result = await adapter.query({
+      project: 'p',
+      metrics: ['unique_users'],
+    });
+    assert.equal(result.rows[0].unique_users, 2);
+  });
+
+  test('query with session_count only does not ORDER BY event_count', async () => {
+    await adapter.trackEvent({ project: 'p', event: 'click', session_id: 'sA', user_id: 'u1', timestamp: Date.now(), properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'click', session_id: 'sB', user_id: 'u2', timestamp: Date.now(), properties: { path: '/' } });
+
+    const result = await adapter.query({
+      project: 'p',
+      metrics: ['session_count'],
+    });
+    assert.equal(result.rows[0].session_count, 2);
+  });
+
   test('query rejects invalid filter op', async () => {
     await assert.rejects(
       () => adapter.query({ project: 'p', filters: [{ field: 'event', op: 'like', value: 'x' }] }),
