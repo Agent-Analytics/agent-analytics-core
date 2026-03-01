@@ -95,6 +95,15 @@
 
   // --- Session ID (30min inactivity timeout) ---
   var SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+
+  // --- Visitor intelligence ---
+  var sessionCount = parseInt(localStorage.getItem('aa_sc') || '0', 10);
+  var firstVisit = parseInt(localStorage.getItem('aa_fv') || '0', 10);
+  if (!firstVisit) {
+    firstVisit = Date.now();
+    localStorage.setItem('aa_fv', String(firstVisit));
+  }
+
   function getSessionId() {
     var now = Date.now();
     var lastActivity = parseInt(sessionStorage.getItem('aa_last_activity') || '0', 10);
@@ -102,18 +111,29 @@
     if (!sid || (lastActivity && (now - lastActivity) > SESSION_TIMEOUT)) {
       sid = 'sess_' + Math.random().toString(36).slice(2, 11) + now.toString(36);
       sessionStorage.setItem('aa_sid', sid);
+      sessionCount++;
+      localStorage.setItem('aa_sc', String(sessionCount));
     }
     sessionStorage.setItem('aa_last_activity', String(now));
     return sid;
   }
 
-  // --- UTM params ---
+  // --- UTM params (session-persistent + first-touch) ---
   function getUtm() {
     var p = new URLSearchParams(location.search);
     var u = {}, keys = ['utm_source','utm_medium','utm_campaign','utm_content','utm_term'];
+    var hasNew = false;
     for (var i = 0; i < keys.length; i++) {
       var v = p.get(keys[i]);
-      if (v) u[keys[i]] = v;
+      if (v) { u[keys[i]] = v; hasNew = true; }
+    }
+    if (hasNew) {
+      sessionStorage.setItem('aa_utm', JSON.stringify(u));
+    } else {
+      try { u = JSON.parse(sessionStorage.getItem('aa_utm') || '{}'); } catch(_) { u = {}; }
+    }
+    if (hasNew && !localStorage.getItem('aa_ft')) {
+      localStorage.setItem('aa_ft', JSON.stringify(u));
     }
     return u;
   }
@@ -212,8 +232,16 @@
       os: dev.os,
       device: dev.device
     };
+    // Visitor intelligence
+    p.session_count = sessionCount;
+    p.days_since_first_visit = Math.floor((Date.now() - firstVisit) / 86400000);
     // Merge UTM
     for (var k in utm) { if (utm.hasOwnProperty(k)) p[k] = utm[k]; }
+    // Merge first-touch attribution
+    try {
+      var ft = JSON.parse(localStorage.getItem('aa_ft') || '{}');
+      for (var kf in ft) { if (ft.hasOwnProperty(kf)) p['first_' + kf] = ft[kf]; }
+    } catch(_) {}
     // Merge global sticky props
     for (var k1 in globalProps) { if (globalProps.hasOwnProperty(k1)) p[k1] = globalProps[k1]; }
     // Merge extra (event-specific overrides global)
