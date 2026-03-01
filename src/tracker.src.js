@@ -373,11 +373,13 @@
   var lastPath = location.pathname + location.search;
   var _flushTimeOnPage = null; // set by heartbeat if enabled
   var _resetErrorTracking = null; // set by error tracking if enabled
+  var _scanImpressions = null; // set by impression tracking
   function onRoute() {
     var cur = location.pathname + location.search;
     if (cur !== lastPath) {
       if (_flushTimeOnPage) _flushTimeOnPage();
       if (_resetErrorTracking) _resetErrorTracking();
+      if (_scanImpressions) _scanImpressions();
       lastPath = cur;
       utm = getUtm(); // re-parse UTM on navigation
       aa.page();
@@ -428,6 +430,39 @@
       } catch(_) {}
     });
   }
+
+  // --- Content impression tracking ---
+  (function() {
+    if (!window.IntersectionObserver) return;
+    var observer;
+    function scan() {
+      if (observer) observer.disconnect();
+      var els = document.querySelectorAll('[data-aa-impression]');
+      if (!els.length) return;
+      observer = new IntersectionObserver(function(entries) {
+        for (var i = 0; i < entries.length; i++) {
+          if (entries[i].isIntersecting) {
+            var el = entries[i].target;
+            var name = el.getAttribute('data-aa-impression');
+            if (!name) continue;
+            var props = { name: name };
+            var attrs = el.attributes;
+            for (var j = 0; j < attrs.length; j++) {
+              var a = attrs[j].name;
+              if (a.startsWith('data-aa-impression-')) {
+                props[a.slice(19)] = attrs[j].value;
+              }
+            }
+            aa.track('$impression', props);
+            observer.unobserve(el);
+          }
+        }
+      }, { threshold: 0.5 });
+      for (var i = 0; i < els.length; i++) observer.observe(els[i]);
+    }
+    scan();
+    _scanImpressions = scan;
+  })();
 
   // --- JS error tracking ---
   if (TRACK_ERRORS) {
