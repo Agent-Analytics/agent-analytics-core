@@ -34,6 +34,7 @@
   var TRACK_OUTGOING = script && script.getAttribute('data-track-outgoing') === 'true';
   var HEARTBEAT = script && script.getAttribute('data-heartbeat');
   var TRACK_ERRORS = script && script.getAttribute('data-track-errors') === 'true';
+  var TRACK_PERF = script && script.getAttribute('data-track-performance') === 'true';
   var REQUIRE_CONSENT = script && script.getAttribute('data-require-consent') === 'true';
 
   // --- Cross-subdomain identity ---
@@ -464,6 +465,28 @@
         col: 0
       });
     });
+  }
+
+  // --- Performance timing ---
+  if (TRACK_PERF) {
+    function collectPerf() {
+      var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+      if (!nav) return;
+      aa.track('$performance', {
+        path: location.pathname,
+        perf_dns: Math.round(nav.domainLookupEnd - nav.domainLookupStart),
+        perf_tcp: Math.round(nav.connectEnd - nav.connectStart),
+        perf_ttfb: Math.round(nav.responseStart - nav.requestStart),
+        perf_dom_interactive: Math.round(nav.domInteractive),
+        perf_dom_complete: Math.round(nav.domComplete),
+        perf_load: Math.round(nav.loadEventEnd)
+      });
+    }
+    if (document.readyState === 'complete') {
+      setTimeout(collectPerf, 0);
+    } else {
+      window.addEventListener('load', function() { setTimeout(collectPerf, 0); });
+    }
   }
 
   // --- Time-on-page engagement tracking ---
