@@ -36,6 +36,8 @@
   var TRACK_ERRORS = script && script.getAttribute('data-track-errors') === 'true';
   var TRACK_PERF = script && script.getAttribute('data-track-performance') === 'true';
   var REQUIRE_CONSENT = script && script.getAttribute('data-require-consent') === 'true';
+  var TRACK_CLICKS = script && script.getAttribute('data-track-clicks') === 'true';
+  var TRACK_VITALS = script && script.getAttribute('data-track-vitals') === 'true';
 
   // --- Cross-subdomain identity ---
   var linkedDomains = null;
@@ -172,6 +174,33 @@
   }
   dev.device = deviceType();
 
+  // --- Timezone ---
+  var tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(_) {}
+
+  // --- Client Hints (Chromium low-entropy, sync) ---
+  if (navigator.userAgentData) {
+    var uad = navigator.userAgentData;
+    if (typeof uad.mobile === 'boolean' && uad.mobile) dev.device = 'mobile';
+    if (uad.platform) {
+      var plat = uad.platform;
+      if (plat === 'macOS') dev.os = 'macOS';
+      else if (plat === 'Windows') dev.os = 'Windows';
+      else if (plat === 'Android') dev.os = 'Android';
+      else if (plat === 'Chrome OS' || plat === 'ChromeOS') dev.os = 'ChromeOS';
+      else if (plat === 'Linux') dev.os = 'Linux';
+      else if (plat === 'iOS') dev.os = 'iOS';
+    }
+    if (uad.brands && uad.brands.length) {
+      for (var bi = 0; bi < uad.brands.length; bi++) {
+        var bn = uad.brands[bi].brand;
+        if (bn === 'Google Chrome') { dev.browser = 'Chrome'; dev.browser_version = uad.brands[bi].version; break; }
+        if (bn === 'Microsoft Edge') { dev.browser = 'Edge'; dev.browser_version = uad.brands[bi].version; break; }
+        if (bn === 'Opera') { dev.browser = 'Opera'; dev.browser_version = uad.brands[bi].version; break; }
+      }
+    }
+  }
+
   // --- Consent management ---
   var consentRequired = REQUIRE_CONSENT;
   var consentGranted = REQUIRE_CONSENT ? localStorage.getItem('aa_consent') === 'granted' : false;
@@ -230,7 +259,8 @@
       browser: dev.browser,
       browser_version: dev.browser_version,
       os: dev.os,
-      device: dev.device
+      device: dev.device,
+      timezone: tz
     };
     // Visitor intelligence
     p.session_count = sessionCount;
@@ -402,10 +432,12 @@
   var _flushTimeOnPage = null; // set by heartbeat if enabled
   var _resetErrorTracking = null; // set by error tracking if enabled
   var _scanImpressions = null; // set by impression tracking
+  var _flushWebVitals = null; // set by web vitals if enabled
   function onRoute() {
     var cur = location.pathname + location.search;
     if (cur !== lastPath) {
       if (_flushTimeOnPage) _flushTimeOnPage();
+      if (_flushWebVitals) _flushWebVitals();
       if (_resetErrorTracking) _resetErrorTracking();
       if (_scanImpressions) _scanImpressions();
       lastPath = cur;
@@ -456,6 +488,38 @@
           });
         }
       } catch(_) {}
+    });
+  }
+
+  // --- Click tracking ---
+  if (TRACK_CLICKS) {
+    document.addEventListener('click', function(e) {
+      // Skip elements with declarative tracking to avoid double-tracking
+      var decl = e.target.closest ? e.target.closest('[data-aa-event]') : null;
+      if (decl) return;
+      var el = e.target.closest ? e.target.closest('a, button') : null;
+      if (!el) return;
+      var tag = el.tagName.toLowerCase();
+      var props = {
+        tag: tag,
+        text: (el.textContent || '').trim().slice(0, 200),
+        id: el.id || '',
+        classes: (el.className && typeof el.className === 'string' ? el.className : '').slice(0, 200)
+      };
+      if (tag === 'a') {
+        var href = el.href || '';
+        props.href = href;
+        try {
+          var u = new URL(href);
+          if (/^(mailto|tel|javascript):/.test(href)) return;
+          props.is_external = u.hostname !== location.hostname;
+        } catch(_) {
+          props.is_external = false;
+        }
+      } else {
+        props.type = el.type || 'submit';
+      }
+      aa.track('$click', props);
     });
   }
 
@@ -550,6 +614,69 @@
     } else {
       window.addEventListener('load', function() { setTimeout(collectPerf, 0); });
     }
+  }
+
+  // --- Core Web Vitals ---
+  if (TRACK_VITALS) {
+    var cwvLcp = -1, cwvCls = 0, cwvInp = [];
+    var cwvFlushed = false;
+
+    function cwvFlush() {
+      if (cwvFlushed) return;
+      if (cwvLcp < 0 && cwvCls === 0 && cwvInp.length === 0) return;
+      cwvFlushed = true;
+      var props = { path: location.pathname };
+      if (cwvLcp >= 0) props.cwv_lcp = Math.round(cwvLcp);
+      props.cwv_cls = Math.round(cwvCls * 1000) / 1000;
+      if (cwvInp.length > 0) {
+        cwvInp.sort(function(a, b) { return a - b; });
+        var idx = Math.min(Math.ceil(cwvInp.length * 0.98) - 1, cwvInp.length - 1);
+        props.cwv_inp = cwvInp[Math.max(idx, 0)];
+      }
+      aa.track('$web_vitals', props);
+    }
+
+    function cwvReset() {
+      cwvFlush();
+      cwvLcp = -1;
+      cwvCls = 0;
+      cwvInp = [];
+      cwvFlushed = false;
+    }
+
+    // LCP
+    try {
+      new PerformanceObserver(function(list) {
+        var entries = list.getEntries();
+        if (entries.length) cwvLcp = entries[entries.length - 1].startTime;
+      }).observe({ type: 'largest-contentful-paint', buffered: true });
+    } catch(_) {}
+
+    // CLS
+    try {
+      new PerformanceObserver(function(list) {
+        var entries = list.getEntries();
+        for (var i = 0; i < entries.length; i++) {
+          if (!entries[i].hadRecentInput) cwvCls += entries[i].value;
+        }
+      }).observe({ type: 'layout-shift', buffered: true });
+    } catch(_) {}
+
+    // INP
+    try {
+      new PerformanceObserver(function(list) {
+        var entries = list.getEntries();
+        for (var i = 0; i < entries.length; i++) {
+          if (entries[i].interactionId) cwvInp.push(entries[i].duration);
+        }
+      }).observe({ type: 'event', buffered: true, durationThreshold: 16 });
+    } catch(_) {}
+
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'hidden') cwvFlush();
+    });
+    window.addEventListener('beforeunload', cwvFlush);
+    _flushWebVitals = cwvReset;
   }
 
   // --- Time-on-page engagement tracking ---
