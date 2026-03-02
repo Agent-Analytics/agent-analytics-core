@@ -435,7 +435,7 @@
   })();
 
   // --- SPA route tracking ---
-  var lastPath = location.pathname + location.search;
+  var lastPath = location.pathname + location.search + location.hash;
   var _flushTimeOnPage = null; // set by heartbeat if enabled
   var _resetErrorTracking = null; // set by error tracking if enabled
   var _scanImpressions = null; // set by impression tracking
@@ -443,7 +443,7 @@
   var _flushScrollDepth = null; // set by scroll depth if enabled
   var _check404 = null; // set by 404 tracking if enabled
   function onRoute() {
-    var cur = location.pathname + location.search;
+    var cur = location.pathname + location.search + location.hash;
     if (cur !== lastPath) {
       if (_flushTimeOnPage) _flushTimeOnPage();
       if (_flushWebVitals) _flushWebVitals();
@@ -457,6 +457,7 @@
     }
   }
   window.addEventListener('popstate', onRoute);
+  window.addEventListener('hashchange', onRoute);
   // Monkey-patch pushState / replaceState
   ['pushState', 'replaceState'].forEach(function(fn) {
     var orig = history[fn];
@@ -473,7 +474,7 @@
       if (_flushTimeOnPage) _flushTimeOnPage();
       if (_flushWebVitals) _flushWebVitals();
       if (_flushScrollDepth) _flushScrollDepth();
-      lastPath = location.pathname + location.search;
+      lastPath = location.pathname + location.search + location.hash;
       utm = getUtm();
       aa.page();
       if (_check404) _check404();
