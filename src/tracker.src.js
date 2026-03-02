@@ -44,6 +44,7 @@
   var TRACK_DOWNLOADS = script && script.getAttribute('data-track-downloads') === 'true';
   var TRACK_FORMS = script && script.getAttribute('data-track-forms') === 'true';
   var TRACK_404 = script && script.getAttribute('data-track-404') === 'true';
+  var TRACK_SCROLL = script && script.getAttribute('data-track-scroll-depth') === 'true';
 
   // --- Cross-subdomain identity ---
   var linkedDomains = null;
@@ -439,12 +440,14 @@
   var _resetErrorTracking = null; // set by error tracking if enabled
   var _scanImpressions = null; // set by impression tracking
   var _flushWebVitals = null; // set by web vitals if enabled
+  var _flushScrollDepth = null; // set by scroll depth if enabled
   var _check404 = null; // set by 404 tracking if enabled
   function onRoute() {
     var cur = location.pathname + location.search;
     if (cur !== lastPath) {
       if (_flushTimeOnPage) _flushTimeOnPage();
       if (_flushWebVitals) _flushWebVitals();
+      if (_flushScrollDepth) _flushScrollDepth();
       if (_resetErrorTracking) _resetErrorTracking();
       if (_scanImpressions) _scanImpressions();
       lastPath = cur;
@@ -469,6 +472,7 @@
     if (e.persisted) {
       if (_flushTimeOnPage) _flushTimeOnPage();
       if (_flushWebVitals) _flushWebVitals();
+      if (_flushScrollDepth) _flushScrollDepth();
       lastPath = location.pathname + location.search;
       utm = getUtm();
       aa.page();
@@ -766,6 +770,59 @@
     });
     window.addEventListener('beforeunload', cwvFlush);
     _flushWebVitals = cwvReset;
+  }
+
+  // --- Scroll depth tracking ---
+  if (TRACK_SCROLL) {
+    function sdDocHeight() {
+      var b = document.body, e = document.documentElement;
+      return Math.max(b.scrollHeight, b.offsetHeight, b.clientHeight,
+        e.scrollHeight, e.offsetHeight, e.clientHeight);
+    }
+
+    var sdH = sdDocHeight();
+    var sdMax = 0;
+    var sdFlushed = false;
+
+    function sdMeasure() {
+      sdH = sdDocHeight();
+      var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+      var px = sdH <= vh ? sdH : (window.scrollY || 0) + vh;
+      if (px > sdMax) sdMax = px;
+    }
+
+    function sdFlush() {
+      if (sdFlushed) return;
+      sdMeasure();
+      if (sdMax > 0 && sdH > 0) {
+        sdFlushed = true;
+        var pct = Math.min(Math.round((sdMax / sdH) * 100), 100);
+        aa.track('$scroll_depth', { scroll_depth: pct, path: location.pathname });
+      }
+    }
+
+    function sdReset() {
+      sdFlush();
+      sdMax = 0;
+      sdFlushed = false;
+      sdMeasure();
+    }
+
+    sdMeasure();
+    document.addEventListener('scroll', sdMeasure, { passive: true });
+
+    function sdAfterLoad() {
+      var c = 0;
+      var iv = setInterval(function() { sdMeasure(); if (++c >= 15) clearInterval(iv); }, 200);
+    }
+    if (document.readyState === 'complete') sdAfterLoad();
+    else window.addEventListener('load', sdAfterLoad);
+
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'hidden') sdFlush();
+    });
+    window.addEventListener('beforeunload', sdFlush);
+    _flushScrollDepth = sdReset;
   }
 
   // --- Time-on-page engagement tracking ---

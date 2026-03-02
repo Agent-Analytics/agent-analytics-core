@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scroll Depth Debug</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #0a0a0a; color: #e0e0e0; }
+    #debug-panel {
+      position: fixed; top: 0; right: 0; width: 320px; background: #1a1a2e; border-left: 2px solid #333;
+      padding: 16px; z-index: 9999; height: 100vh; overflow-y: auto; font-size: 13px;
+    }
+    #debug-panel h2 { color: #7dd3fc; margin-bottom: 12px; font-size: 16px; }
+    .metric { margin-bottom: 8px; }
+    .metric .label { color: #888; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .metric .value { color: #fff; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .metric .unit { color: #666; font-size: 14px; }
+    hr { border: none; border-top: 1px solid #333; margin: 12px 0; }
+    #flush-log { margin-top: 8px; }
+    #flush-log .entry { background: #16213e; border-radius: 4px; padding: 6px 8px; margin-bottom: 4px; font-size: 11px; color: #7dd3fc; }
+    .content { margin-right: 340px; padding: 40px; }
+    .content h1 { font-size: 28px; margin-bottom: 16px; color: #fff; }
+    .content p { color: #999; line-height: 1.6; margin-bottom: 16px; }
+    .section { padding: 200px 0; border-bottom: 1px solid #222; }
+    .section h2 { color: #7dd3fc; margin-bottom: 8px; }
+    .progress-bar { height: 4px; background: #333; border-radius: 2px; margin-top: 8px; }
+    .progress-fill { height: 100%; background: #7dd3fc; border-radius: 2px; transition: width 0.1s; }
+  </style>
+</head>
+<body>
+  <div id="debug-panel">
+    <h2>Scroll Depth Debug</h2>
+    <div class="metric">
+      <div class="label">Max Scroll Depth</div>
+      <div class="value"><span id="d-pct">0</span><span class="unit">%</span></div>
+      <div class="progress-bar"><div class="progress-fill" id="d-bar" style="width:0%"></div></div>
+    </div>
+    <div class="metric">
+      <div class="label">Current Scroll</div>
+      <div class="value"><span id="d-cur-px">0</span><span class="unit">px</span> / <span id="d-cur-pct">0</span><span class="unit">%</span></div>
+    </div>
+    <div class="metric">
+      <div class="label">Max Reached</div>
+      <div class="value"><span id="d-max-px">0</span><span class="unit">px</span></div>
+    </div>
+    <hr>
+    <div class="metric">
+      <div class="label">Document Height</div>
+      <div class="value"><span id="d-doc-h">0</span><span class="unit">px</span></div>
+    </div>
+    <div class="metric">
+      <div class="label">Viewport Height</div>
+      <div class="value"><span id="d-vh">0</span><span class="unit">px</span></div>
+    </div>
+    <hr>
+    <div class="label">Flush Log (page exit events)</div>
+    <div id="flush-log"></div>
+    <button onclick="simulateFlush()" style="margin-top:8px;padding:6px 12px;background:#16213e;color:#7dd3fc;border:1px solid #333;border-radius:4px;cursor:pointer;font-size:12px;">Simulate Flush</button>
+  </div>
+
+  <div class="content">
+    <h1>Scroll Depth Tracking — Debug Page</h1>
+    <p>Scroll down to see the debug panel update in real-time. The "Max Scroll Depth" only increases — scrolling back up won't decrease it.</p>
+
+    <div class="section"><h2>Section 1</h2><p>Keep scrolling...</p></div>
+    <div class="section"><h2>Section 2</h2><p>Getting deeper...</p></div>
+    <div class="section"><h2>Section 3</h2><p>Past the halfway mark...</p></div>
+    <div class="section"><h2>Section 4</h2><p>Almost there...</p></div>
+    <div class="section"><h2>Section 5</h2><p>Nearly at the bottom...</p></div>
+    <div class="section"><h2>Section 6</h2><p>You made it to the end!</p></div>
+  </div>
+
+  <script>
+    // Mirror the tracker's algorithms exactly
+    function sdDocHeight() {
+      var b = document.body || {}, e = document.documentElement || {};
+      return Math.max(
+        b.scrollHeight || 0, b.offsetHeight || 0, b.clientHeight || 0,
+        e.scrollHeight || 0, e.offsetHeight || 0, e.clientHeight || 0
+      );
+    }
+
+    var sdH = sdDocHeight();
+    var sdMax = 0;
+
+    function sdMeasure() {
+      sdH = sdDocHeight();
+      var vh = window.innerHeight || (document.documentElement || {}).clientHeight || 0;
+      var px = sdH <= vh ? sdH : (window.scrollY || 0) + vh;
+      if (px > sdMax) sdMax = px;
+      updateDisplay(vh, px);
+    }
+
+    function updateDisplay(vh, curPx) {
+      var pct = sdH > 0 ? Math.min(Math.round((sdMax / sdH) * 100), 100) : 0;
+      var curPct = sdH > 0 ? Math.min(Math.round((curPx / sdH) * 100), 100) : 0;
+      document.getElementById('d-pct').textContent = pct;
+      document.getElementById('d-bar').style.width = pct + '%';
+      document.getElementById('d-cur-px').textContent = Math.round(curPx);
+      document.getElementById('d-cur-pct').textContent = curPct;
+      document.getElementById('d-max-px').textContent = Math.round(sdMax);
+      document.getElementById('d-doc-h').textContent = sdH;
+      document.getElementById('d-vh').textContent = vh;
+    }
+
+    function simulateFlush() {
+      sdMeasure();
+      if (sdMax > 0 && sdH > 0) {
+        var pct = Math.min(Math.round((sdMax / sdH) * 100), 100);
+        var log = document.getElementById('flush-log');
+        var entry = document.createElement('div');
+        entry.className = 'entry';
+        entry.textContent = new Date().toLocaleTimeString() + ' — $scroll_depth: ' + pct + '% path=' + location.pathname;
+        log.insertBefore(entry, log.firstChild);
+      }
+    }
+
+    sdMeasure();
+    document.addEventListener('scroll', sdMeasure, { passive: true });
+
+    // Re-check height after load
+    if (document.readyState === 'complete') {
+      var c = 0;
+      var iv = setInterval(function() { sdMeasure(); if (++c >= 15) clearInterval(iv); }, 200);
+    } else {
+      window.addEventListener('load', function() {
+        var c = 0;
+        var iv = setInterval(function() { sdMeasure(); if (++c >= 15) clearInterval(iv); }, 200);
+      });
+    }
+
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'hidden') simulateFlush();
+    });
+  </script>
+</body>
+</html>
