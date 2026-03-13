@@ -433,19 +433,15 @@ describe('Session tracking - Handler endpoints', () => {
     handler = makeHandler(adapter);
   });
 
-  test('10. GET /sessions returns correct response', async () => {
+  test('10. GET /sessions is no longer exposed by the OSS handler', async () => {
     await adapter.trackEvent({ project: 'p', event: 'pv', session_id: 's1', user_id: 'u1', timestamp: Date.now(), properties: { path: '/' } });
     const { response } = await handler(makeRequest('GET', '/sessions?project=p&days=7'));
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.equal(body.project, 'p');
-    assert.ok(Array.isArray(body.sessions));
-    assert.equal(body.sessions.length, 1);
+    assert.equal(response.status, 404);
   });
 
-  test('11. GET /sessions requires project', async () => {
+  test('11. GET /sessions without project still returns not found', async () => {
     const { response } = await handler(makeRequest('GET', '/sessions'));
-    assert.equal(response.status, 400);
+    assert.equal(response.status, 404);
   });
 
   test('12. GET /stats includes session metrics', async () => {

@@ -61,16 +61,9 @@ const ROUTES = {
   'POST /identify':           withWriteAuth(handleIdentify),
   'GET /projects':            withReadAuth(handleListProjects),
   'GET /stats':               withProjectRead(handleStats),
-  'GET /sessions':            withProjectRead(handleSessions),
   'GET /events':              withProjectRead(handleEvents),
   'POST /query':              withReadAuth(handleQuery),
-  'GET /properties/received': withProjectRead(handlePropertiesReceived),
   'GET /properties':          withProjectRead(handleProperties),
-  'GET /breakdown':           withProjectRead(handleBreakdown),
-  'GET /insights':            withProjectRead(handleInsights),
-  'GET /pages':               withProjectRead(handlePages),
-  'GET /sessions/distribution': withProjectRead(handleSessionDistribution),
-  'GET /heatmap':             withProjectRead(handleHeatmap),
 };
 
 /**
