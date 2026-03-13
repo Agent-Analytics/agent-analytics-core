@@ -60,6 +60,15 @@ function daysAgoMs(n) {
   return Date.now() - n * 86_400_000;
 }
 
+function recentUtcWeekdayAt(targetWeekday, hour) {
+  const now = new Date();
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour, 0, 0, 0));
+  const diff = (d.getUTCDay() - targetWeekday + 7) % 7;
+  d.setUTCDate(d.getUTCDate() - diff);
+  if (d.getTime() > Date.now()) d.setUTCDate(d.getUTCDate() - 7);
+  return d.getTime();
+}
+
 // ---------------------------------------------------------------------------
 // Tests: getBreakdown
 // ---------------------------------------------------------------------------
@@ -395,11 +404,8 @@ describe('BaseAdapter.getHeatmap', () => {
   });
 
   test('returns day_of_week × hour grid', async () => {
-    // Tuesday Feb 11, 2026 2:00 PM UTC = 1739282400000
-    // strftime('%w', ...) for Tuesday = 2
-    const tuesdayAt2pm = new Date('2026-02-10T14:00:00Z').getTime();
-    // Sunday Feb 9, 2026 3:00 AM UTC
-    const sundayAt3am = new Date('2026-02-08T03:00:00Z').getTime();
+    const tuesdayAt2pm = recentUtcWeekdayAt(2, 14);
+    const sundayAt3am = recentUtcWeekdayAt(0, 3);
 
     await adapter.trackEvent({ project: 'p', event: 'pv', user_id: 'u1', timestamp: tuesdayAt2pm });
     await adapter.trackEvent({ project: 'p', event: 'pv', user_id: 'u2', timestamp: tuesdayAt2pm + 1000 });
@@ -431,7 +437,7 @@ describe('BaseAdapter.getHeatmap', () => {
   });
 
   test('includes day_name in results', async () => {
-    const mondayNoon = new Date('2026-02-09T12:00:00Z').getTime();
+    const mondayNoon = recentUtcWeekdayAt(1, 12);
     await adapter.trackEvent({ project: 'p', event: 'pv', user_id: 'u1', timestamp: mondayNoon });
 
     const result = await adapter.getHeatmap({ project: 'p', since: '30d' });

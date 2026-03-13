@@ -469,15 +469,13 @@ describe('Session tracking - Handler endpoints', () => {
     assert.equal(body.events.length, 1, 'handler should filter by session_id');
   });
 
-  test('14. POST /query supports session_id group_by and session metrics', async () => {
-    await adapter.trackEvent({ project: 'p', event: 'pv', session_id: 's1', user_id: 'u1', timestamp: Date.now(), properties: { path: '/' } });
-    // session_id in group_by should not throw
+  test('14. POST /query is no longer exposed by the OSS handler', async () => {
     const { response } = await handler(makeRequest('POST', '/query', {
       project: 'p',
       metrics: ['event_count'],
       group_by: ['session_id'],
     }));
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 404);
   });
 });
 

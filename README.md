@@ -101,7 +101,7 @@ When clicked, this fires a `cta_click` event with `{ id: "hero_signup" }`. Add p
 
 Set `localStorage.setItem('aa_disabled', 'true')` to disable tracking entirely (useful for internal teams or opt-out flows).
 
-## Querying
+## Reading
 
 All read endpoints require an API key via `X-API-Key` header or `?key=` param.
 
@@ -112,10 +112,8 @@ curl "https://your-server.com/stats?project=my-site" -H "X-API-Key: KEY"
 # Raw events
 curl "https://your-server.com/events?project=my-site&event=page_view&limit=50" -H "X-API-Key: KEY"
 
-# Flexible query — filter by properties, group, sort
-curl -X POST "https://your-server.com/query" \
-  -H "X-API-Key: KEY" -H "Content-Type: application/json" \
-  -d '{"project":"my-site","metrics":["event_count","unique_users"],"group_by":["event"],"filters":[{"field":"properties.browser","op":"eq","value":"Chrome"}]}'
+# Projects discovered from tracked data
+curl "https://your-server.com/projects" -H "X-API-Key: KEY"
 ```
 
 ## Endpoints
@@ -123,19 +121,11 @@ curl -X POST "https://your-server.com/query" \
 **Write** (project token in body):
 - `POST /track` — single event (`{ project, token, event, properties?, user_id?, session_id?, timestamp? }`)
 - `POST /track/batch` — up to 100 events (`{ events: [...] }`)
+- `POST /identify` — merge an anonymous visitor id into a known user id
 
 **Read** (API key required):
 - `GET /stats?project=X` — aggregated overview with time series, top events, sessions. Optional: `since`, `groupBy` (hour/day/week/month)
 - `GET /events?project=X` — raw event log. Optional: `event`, `session_id`, `since`, `limit`
-- `GET /sessions?project=X` — session list. Optional: `user_id`, `is_bounce`, `since`, `limit`
-- `POST /query` — the big one. Metrics (`event_count`, `unique_users`, `session_count`, `bounce_rate`, `avg_duration`), `group_by`, `filters` on fields or `properties.*`, `order_by`, date range. Property filters use `json_extract` under the hood — keys are validated to prevent injection.
-- `GET /properties?project=X` — event names + property keys seen in recent data
-- `GET /properties/received?project=X` — which property keys appear on which event types (sampled)
-- `GET /breakdown?project=X&property=path` — top property values with unique user counts
-- `GET /insights?project=X&period=7d` — period-over-period comparison with trend direction
-- `GET /pages?project=X&type=entry` — entry/exit page stats (bounce rate, avg duration)
-- `GET /sessions/distribution?project=X` — session duration buckets with engaged_pct
-- `GET /heatmap?project=X` — day-of-week × hour traffic grid with peak detection
 - `GET /projects` — all projects derived from events data
 
 **Utility:** `GET /health`, `GET /tracker.js`
@@ -150,18 +140,14 @@ class MyAdapter {
   trackBatch(events)
   getStats({ project, since?, groupBy? })
   getEvents({ project, event?, session_id?, since?, limit? })
-  query({ project, metrics?, filters?, date_from?, date_to?, group_by?, order_by?, order?, limit? })
-  getProperties({ project, since? })
-  getPropertiesReceived({ project, since?, sample? })
   listProjects()
-  getSessions({ project, since?, user_id?, is_bounce?, limit? })
   getSessionStats({ project, since? })
   upsertSession(sessionData)
   cleanupSessions({ project, before_date })
 }
 ```
 
-All methods return promises. See `src/db/d1.js` for the reference implementation — `trackEvent` and `trackBatch` handle session upserts atomically via `db.batch()`.
+Optional richer analytics methods like `query()` and `getProperties()` can still exist on adapters for non-OSS consumers, but the OSS public handler only exposes the endpoints listed above. All methods return promises. See `src/db/d1.js` for the reference implementation — `trackEvent` and `trackBatch` handle session upserts atomically via `db.batch()`.
 
 ## License
 

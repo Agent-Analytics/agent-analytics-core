@@ -14,10 +14,6 @@ const stubDb = {
   listProjects: async () => [],
   getStats: async () => ({}),
   getEvents: async () => [],
-  getSessions: async () => [],
-  getProperties: async () => ({}),
-  getPropertiesReceived: async () => ({}),
-  query: async () => ({ data: [] }),
 };
 
 function makeHandler(overrides = {}) {
@@ -134,37 +130,6 @@ test('400 on POST /track/batch with >100 events', async () => {
   const err = await getError(h, 'POST', '/track/batch', { events });
   assert.equal(err.status, 400);
   assert.equal(err.error, ERROR_CODES.BATCH_TOO_LARGE);
-});
-
-test('400 on POST /query without project', async () => {
-  const h = makeHandler();
-  const err = await getError(h, 'POST', '/query', {});
-  assert.equal(err.status, 400);
-  assert.equal(err.error, ERROR_CODES.PROJECT_REQUIRED);
-});
-
-test('INVALID_METRIC propagates through POST /query', async () => {
-  const badDb = {
-    ...stubDb,
-    query: async (opts) => {
-      throw new AnalyticsError(ERROR_CODES.INVALID_METRIC, 'invalid metric: bad_metric', 400);
-    },
-  };
-  const h = makeHandler({ db: badDb });
-  const err = await getError(h, 'POST', '/query', { project: 'p1', metrics: ['bad_metric'] });
-  assert.equal(err.status, 400);
-  assert.equal(err.error, ERROR_CODES.INVALID_METRIC);
-});
-
-test('QUERY_FAILED for non-AnalyticsError in query', async () => {
-  const badDb = {
-    ...stubDb,
-    query: async () => { throw new Error('sqlite exploded'); },
-  };
-  const h = makeHandler({ db: badDb });
-  const err = await getError(h, 'POST', '/query', { project: 'p1' });
-  assert.equal(err.status, 400);
-  assert.equal(err.error, ERROR_CODES.QUERY_FAILED);
 });
 
 test('500 INTERNAL_ERROR for unexpected handler crash', async () => {

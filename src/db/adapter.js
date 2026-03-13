@@ -56,11 +56,12 @@ export function parseSinceMs(since) {
  * @property {function} trackBatch - Insert multiple events
  * @property {function} getStats - Aggregated stats for a project
  * @property {function} getEvents - Raw event query
- * @property {function} query - Flexible analytics query
- * @property {function} getProperties - Discover event names and property keys
+ * @property {function} listProjects - List all projects (returns array of {id, name, token, created})
  * @property {function} upsertSession - Upsert a session row
  * @property {function} getSessions - List sessions with filters
  * @property {function} getSessionStats - Aggregate session metrics
  * @property {function} cleanupSessions - Delete sessions older than date
- * @property {function} listProjects - List all projects (returns array of {id, name, token, created})
+ * @property {function} [query] - Optional richer analytics query helper for non-OSS consumers
+ * @property {function} [getProperties] - Optional event/property discovery helper for non-OSS consumers
+ * @property {function} [getPropertiesReceived] - Optional richer property sampling helper for non-OSS consumers
  */
