@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isBot } from '../src/bot.js';
+import { isBot, classifyBot } from '../src/bot.js';
 
 // --- Known bots should be detected ---
 
@@ -60,6 +60,23 @@ test('detects AI crawlers', () => {
   }
 });
 
+test('classifies AI callers separately from AI crawlers', () => {
+  const chatgptUser = classifyBot('ChatGPT-User/1.0');
+  assert.equal(chatgptUser.isBot, true);
+  assert.equal(chatgptUser.category, 'ai_agent');
+  assert.equal(chatgptUser.actor, 'ChatGPT-User');
+
+  const gptBot = classifyBot('Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.0; +https://openai.com/gptbot)');
+  assert.equal(gptBot.isBot, true);
+  assert.equal(gptBot.category, 'ai_agent');
+  assert.equal(gptBot.actor, 'GPTBot');
+
+  const claudeBot = classifyBot('ClaudeBot/1.0');
+  assert.equal(claudeBot.isBot, true);
+  assert.equal(claudeBot.category, 'ai_agent');
+  assert.equal(claudeBot.actor, 'ClaudeBot');
+});
+
 test('detects headless browsers', () => {
   const bots = [
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/120.0.0.0 Safari/537.36',
@@ -71,6 +88,37 @@ test('detects headless browsers', () => {
   for (const ua of bots) {
     assert.ok(isBot(ua), `should detect: ${ua}`);
   }
+});
+
+test('classifies representative bot families into stable categories', () => {
+  assert.deepEqual(
+    classifyBot('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'),
+    { isBot: true, category: 'search_crawler', actor: 'Googlebot' }
+  );
+  assert.deepEqual(
+    classifyBot('Twitterbot/1.0'),
+    { isBot: true, category: 'social_preview', actor: 'Twitterbot' }
+  );
+  assert.deepEqual(
+    classifyBot('Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)'),
+    { isBot: true, category: 'seo_research', actor: 'AhrefsBot' }
+  );
+  assert.deepEqual(
+    classifyBot('Pingdom.com_bot_version_1.4_(http://www.pingdom.com/)'),
+    { isBot: true, category: 'monitoring_perf', actor: 'Pingdom' }
+  );
+  assert.deepEqual(
+    classifyBot('curl/7.88.1'),
+    { isBot: true, category: 'automation_script', actor: 'curl' }
+  );
+  assert.deepEqual(
+    classifyBot('Playwright/1.40'),
+    { isBot: true, category: 'headless_browser', actor: 'Playwright' }
+  );
+  assert.deepEqual(
+    classifyBot('Mozilla/5.0 (compatible; CustomCrawler/1.0)'),
+    { isBot: true, category: 'generic_bot', actor: 'CustomCrawler' }
+  );
 });
 
 test('detects monitoring tools', () => {
@@ -126,6 +174,13 @@ test('allows real desktop browsers', () => {
   }
 });
 
+test('classifyBot returns non-bot metadata for real browsers', () => {
+  assert.deepEqual(
+    classifyBot('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'),
+    { isBot: false, category: null, actor: null }
+  );
+});
+
 test('allows real mobile browsers', () => {
   const browsers = [
     'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
@@ -143,6 +198,7 @@ test('null/undefined/empty UA treated as bot', () => {
   assert.ok(isBot(null), 'null should be bot');
   assert.ok(isBot(undefined), 'undefined should be bot');
   assert.ok(isBot(''), 'empty string should be bot');
+  assert.deepEqual(classifyBot(''), { isBot: true, category: 'generic_bot', actor: 'Unknown' });
 });
 
 test('Cubot phone is NOT a bot', () => {
