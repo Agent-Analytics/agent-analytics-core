@@ -19,6 +19,7 @@ import {
 import {
   GRANULARITY, VALID_GRANULARITIES,
   METRICS, ALLOWED_METRICS,
+  COUNT_MODES, ALLOWED_COUNT_MODES,
   GROUP_BY_FIELDS, ALLOWED_GROUP_BY,
   FILTER_OPS, FILTERABLE_FIELDS,
   ALLOWED_ORDER_BY,
@@ -31,6 +32,28 @@ export function validatePropertyKey(key) {
   if (!key || key.length > 128 || !/^[a-zA-Z0-9_]+$/.test(key)) {
     throw new AnalyticsError(ERROR_CODES.INVALID_PROPERTY_KEY, 'Invalid property filter key', 400);
   }
+}
+
+function resolveCountMode(metrics, count_mode) {
+  if (count_mode !== undefined && !ALLOWED_COUNT_MODES.includes(count_mode)) {
+    throw new AnalyticsError(
+      ERROR_CODES.INVALID_COUNT_MODE,
+      `invalid count_mode: ${count_mode}. allowed: ${ALLOWED_COUNT_MODES.join(', ')}`,
+      400,
+    );
+  }
+
+  if (count_mode !== undefined) return count_mode;
+  return metrics.includes(METRICS.EVENT_COUNT) ? COUNT_MODES.SESSION_THEN_USER : COUNT_MODES.RAW;
+}
+
+function buildEventCountSelect(countMode) {
+  if (countMode === COUNT_MODES.RAW) return 'COUNT(*) as event_count';
+  return `COUNT(DISTINCT CASE
+    WHEN session_id IS NOT NULL THEN 's:' || session_id
+    WHEN user_id IS NOT NULL THEN 'u:' || user_id
+    ELSE 'e:' || id
+  END) as event_count`;
 }
 
 export class BaseAdapter {
@@ -233,23 +256,24 @@ export class BaseAdapter {
     return rows.map(e => ({ ...e, properties: e.properties ? JSON.parse(e.properties) : null }));
   }
 
-  async query({ project, metrics = [METRICS.EVENT_COUNT], filters, date_from, date_to, group_by = [], order_by, order, limit = DEFAULT_LIMIT }) {
+  async query({ project, metrics = [METRICS.EVENT_COUNT], filters, date_from, date_to, group_by = [], order_by, order, limit = DEFAULT_LIMIT, count_mode }) {
     for (const m of metrics) {
       if (!ALLOWED_METRICS.includes(m)) throw new AnalyticsError(ERROR_CODES.INVALID_METRIC, `invalid metric: ${m}. allowed: ${ALLOWED_METRICS.join(', ')}`, 400);
     }
     for (const g of group_by) {
       if (!ALLOWED_GROUP_BY.includes(g)) throw new AnalyticsError(ERROR_CODES.INVALID_GROUP_BY, `invalid group_by: ${g}. allowed: ${ALLOWED_GROUP_BY.join(', ')}`, 400);
     }
+    const resolvedCountMode = resolveCountMode(metrics, count_mode);
 
     const selectParts = [...group_by];
     for (const m of metrics) {
-      if (m === METRICS.EVENT_COUNT) selectParts.push('COUNT(*) as event_count');
+      if (m === METRICS.EVENT_COUNT) selectParts.push(buildEventCountSelect(resolvedCountMode));
       if (m === METRICS.UNIQUE_USERS) selectParts.push('COUNT(DISTINCT user_id) as unique_users');
       if (m === METRICS.SESSION_COUNT) selectParts.push('COUNT(DISTINCT session_id) as session_count');
       if (m === METRICS.BOUNCE_RATE) selectParts.push('COUNT(DISTINCT session_id) as _session_count_for_bounce');
       if (m === METRICS.AVG_DURATION) selectParts.push('COUNT(DISTINCT session_id) as _session_count_for_duration');
     }
-    if (selectParts.length === 0) selectParts.push('COUNT(*) as event_count');
+    if (selectParts.length === 0) selectParts.push(buildEventCountSelect(resolvedCountMode));
 
     const fromDate = parseSince(date_from);
     const toDate = date_to || today();

@@ -332,6 +332,75 @@ describe('BaseAdapter contract', () => {
     assert.equal(result.rows[0].event_count, 1);
   });
 
+  test('query defaults event_count to session_then_user dedupe', async () => {
+    const now = Date.now();
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now, properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now + 1, properties: { path: '/' } });
+
+    const result = await adapter.query({
+      project: 'p',
+      filters: [{ field: 'event', op: 'eq', value: 'project_created' }],
+    });
+    assert.equal(result.rows[0].event_count, 1);
+  });
+
+  test('query supports explicit raw count_mode for event_count', async () => {
+    const now = Date.now();
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now, properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now + 1, properties: { path: '/' } });
+
+    const result = await adapter.query({
+      project: 'p',
+      metrics: ['event_count'],
+      filters: [{ field: 'event', op: 'eq', value: 'project_created' }],
+      count_mode: 'raw',
+    });
+    assert.equal(result.rows[0].event_count, 2);
+  });
+
+  test('query falls back to user_id dedupe when session_id is missing', async () => {
+    const now = Date.now();
+    await adapter.trackEvent({ project: 'p', event: 'api_key_generated', user_id: 'u1', timestamp: now });
+    await adapter.trackEvent({ project: 'p', event: 'api_key_generated', user_id: 'u1', timestamp: now + 1 });
+
+    const result = await adapter.query({
+      project: 'p',
+      filters: [{ field: 'event', op: 'eq', value: 'api_key_generated' }],
+    });
+    assert.equal(result.rows[0].event_count, 1);
+  });
+
+  test('query falls back to raw row identity when session_id and user_id are missing', async () => {
+    const now = Date.now();
+    await adapter.trackEvent({ project: 'p', event: 'anonymous_activation', timestamp: now });
+    await adapter.trackEvent({ project: 'p', event: 'anonymous_activation', timestamp: now + 1 });
+
+    const result = await adapter.query({
+      project: 'p',
+      filters: [{ field: 'event', op: 'eq', value: 'anonymous_activation' }],
+    });
+    assert.equal(result.rows[0].event_count, 2);
+  });
+
+  test('query dedupes event_count within each group', async () => {
+    const now = Date.now();
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now, properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now + 1, properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'api_key_generated', user_id: 'u1', session_id: 's1', timestamp: now + 2, properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'api_key_generated', user_id: 'u2', session_id: 's2', timestamp: now + 3, properties: { path: '/' } });
+
+    const result = await adapter.query({
+      project: 'p',
+      group_by: ['event'],
+      order_by: 'event',
+      order: 'asc',
+    });
+    const created = result.rows.find(r => r.event === 'project_created');
+    const keyGenerated = result.rows.find(r => r.event === 'api_key_generated');
+    assert.equal(created.event_count, 1);
+    assert.equal(keyGenerated.event_count, 2);
+  });
+
   test('query rejects invalid metric', async () => {
     await assert.rejects(
       () => adapter.query({ project: 'p', metrics: ['bogus'] }),
@@ -396,6 +465,7 @@ describe('BaseAdapter contract', () => {
 
     const result = await adapter.query({
       project: 'p',
+      count_mode: 'raw',
       filters: [{ field: 'event', op: 'contains', value: 'page' }],
     });
     assert.equal(result.rows[0].event_count, 2);
@@ -510,6 +580,18 @@ describe('BaseAdapter contract', () => {
       metrics: ['session_count'],
     });
     assert.equal(result.rows[0].session_count, 2);
+  });
+
+  test('query ignores count_mode when event_count is not requested', async () => {
+    await adapter.trackEvent({ project: 'p', event: 'click', user_id: 'u1', timestamp: Date.now() });
+    await adapter.trackEvent({ project: 'p', event: 'click', user_id: 'u2', timestamp: Date.now() });
+
+    const result = await adapter.query({
+      project: 'p',
+      metrics: ['unique_users'],
+      count_mode: 'session_then_user',
+    });
+    assert.equal(result.rows[0].unique_users, 2);
   });
 
   test('query rejects invalid filter op', async () => {

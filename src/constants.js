@@ -12,6 +12,12 @@ export const METRICS = Object.freeze({
 });
 export const ALLOWED_METRICS = Object.freeze(Object.values(METRICS));
 
+export const COUNT_MODES = Object.freeze({
+  RAW: 'raw',
+  SESSION_THEN_USER: 'session_then_user',
+});
+export const ALLOWED_COUNT_MODES = Object.freeze(Object.values(COUNT_MODES));
+
 export const GROUP_BY_FIELDS = Object.freeze({
   EVENT: 'event', DATE: 'date', USER_ID: 'user_id', SESSION_ID: 'session_id', COUNTRY: 'country',
 });
