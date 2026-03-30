@@ -115,6 +115,47 @@ describe('identifyUser (BaseAdapter)', () => {
     assert.ok(mapping);
     assert.equal(mapping.canonical_id, 'user_123');
   });
+
+  test('canonicalizes a late event after identify has already been recorded', async () => {
+    const now = Date.now();
+
+    await adapter.identifyUser({ project: 'p1', previous_id: 'anon_abc', canonical_id: 'user_123' });
+    await adapter.trackEvent({
+      project: 'p1',
+      event: 'page_view',
+      user_id: 'anon_abc',
+      session_id: 's1',
+      timestamp: now,
+      properties: { path: '/' },
+    });
+
+    const event = adapter.db.prepare('SELECT user_id FROM events WHERE project_id = ?').get('p1');
+    const session = adapter.db.prepare('SELECT user_id FROM sessions WHERE project_id = ?').get('p1');
+    assert.equal(event.user_id, 'user_123');
+    assert.equal(session.user_id, 'user_123');
+  });
+
+  test('canonicalizes late events through an existing identity chain', async () => {
+    const now = Date.now();
+
+    await adapter.identifyUser({ project: 'p1', previous_id: 'anon_abc', canonical_id: 'user_123' });
+    await adapter.identifyUser({ project: 'p1', previous_id: 'user_123', canonical_id: 'user_final' });
+    await adapter.trackEvent({
+      project: 'p1',
+      event: 'page_view',
+      user_id: 'anon_abc',
+      session_id: 's1',
+      timestamp: now,
+      properties: { path: '/' },
+    });
+
+    const event = adapter.db.prepare('SELECT user_id FROM events WHERE project_id = ?').get('p1');
+    const session = adapter.db.prepare('SELECT user_id FROM sessions WHERE project_id = ?').get('p1');
+    const mapping = adapter.db.prepare('SELECT canonical_id FROM identity_map WHERE previous_id = ? AND project_id = ?').get('anon_abc', 'p1');
+    assert.equal(event.user_id, 'user_final');
+    assert.equal(session.user_id, 'user_final');
+    assert.equal(mapping.canonical_id, 'user_final');
+  });
 });
 
 describe('POST /identify (handler)', () => {
