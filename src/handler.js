@@ -62,6 +62,9 @@ const ROUTES = {
   'GET /projects':            withReadAuth(handleListProjects),
   'GET /stats':               withProjectRead(handleStats),
   'GET /events':              withProjectRead(handleEvents),
+  'POST /query':              withReadAuth(handleQuery),
+  'GET /properties':          withProjectRead(handleProperties),
+  'GET /properties/received': withProjectRead(handlePropertiesReceived),
 };
 
 /**

@@ -480,13 +480,13 @@ describe('Session tracking - Handler endpoints', () => {
     assert.equal(body.events.length, 1, 'handler should filter by session_id');
   });
 
-  test('14. POST /query is no longer exposed by the OSS handler', async () => {
+  test('14. POST /query stays exposed by the OSS handler', async () => {
     const { response } = await handler(makeRequest('POST', '/query', {
       project: 'p',
       metrics: ['event_count'],
       group_by: ['session_id'],
     }));
-    assert.equal(response.status, 404);
+    assert.equal(response.status, 200);
   });
 });
 
