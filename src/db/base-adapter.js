@@ -47,12 +47,31 @@ function resolveCountMode(metrics, count_mode) {
   return metrics.includes(METRICS.EVENT_COUNT) ? COUNT_MODES.SESSION_THEN_USER : COUNT_MODES.RAW;
 }
 
-function buildEventCountSelect(countMode) {
+function buildEventCountSelect(countMode, groupBy = []) {
   if (countMode === COUNT_MODES.RAW) return 'COUNT(*) as event_count';
+  return buildSessionThenUserEventCountSelect(groupBy);
+}
+
+function buildNullSafeEquality(column, leftAlias, rightAlias) {
+  return `((${leftAlias}.${column} = ${rightAlias}.${column}) OR (${leftAlias}.${column} IS NULL AND ${rightAlias}.${column} IS NULL))`;
+}
+
+function buildSessionThenUserEventCountSelect(groupBy = []) {
+  const sameGroupConditions = groupBy
+    .map((column) => buildNullSafeEquality(column, 'other', 'current'))
+    .join(' AND ');
+  const sameGroupClause = sameGroupConditions ? `\n        AND ${sameGroupConditions}` : '';
+
   return `COUNT(DISTINCT CASE
-    WHEN session_id IS NOT NULL THEN 's:' || session_id
-    WHEN user_id IS NOT NULL THEN 'u:' || user_id
-    ELSE 'e:' || id
+    WHEN current.session_id IS NOT NULL AND current.user_id IS NOT NULL THEN 'u:' || current.user_id || ':s:' || current.session_id
+    WHEN current.session_id IS NOT NULL THEN 's:' || current.session_id
+    WHEN current.user_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM filtered other
+      WHERE other.user_id = current.user_id
+        AND other.session_id IS NOT NULL${sameGroupClause}
+    ) THEN NULL
+    WHEN current.user_id IS NOT NULL THEN 'u:' || current.user_id
+    ELSE 'e:' || current.id
   END) as event_count`;
 }
 
@@ -265,15 +284,15 @@ export class BaseAdapter {
     }
     const resolvedCountMode = resolveCountMode(metrics, count_mode);
 
-    const selectParts = [...group_by];
+    const selectParts = group_by.map((column) => `current.${column} as ${column}`);
     for (const m of metrics) {
-      if (m === METRICS.EVENT_COUNT) selectParts.push(buildEventCountSelect(resolvedCountMode));
-      if (m === METRICS.UNIQUE_USERS) selectParts.push('COUNT(DISTINCT user_id) as unique_users');
-      if (m === METRICS.SESSION_COUNT) selectParts.push('COUNT(DISTINCT session_id) as session_count');
-      if (m === METRICS.BOUNCE_RATE) selectParts.push('COUNT(DISTINCT session_id) as _session_count_for_bounce');
-      if (m === METRICS.AVG_DURATION) selectParts.push('COUNT(DISTINCT session_id) as _session_count_for_duration');
+      if (m === METRICS.EVENT_COUNT) selectParts.push(buildEventCountSelect(resolvedCountMode, group_by));
+      if (m === METRICS.UNIQUE_USERS) selectParts.push('COUNT(DISTINCT current.user_id) as unique_users');
+      if (m === METRICS.SESSION_COUNT) selectParts.push('COUNT(DISTINCT current.session_id) as session_count');
+      if (m === METRICS.BOUNCE_RATE) selectParts.push('COUNT(DISTINCT current.session_id) as _session_count_for_bounce');
+      if (m === METRICS.AVG_DURATION) selectParts.push('COUNT(DISTINCT current.session_id) as _session_count_for_duration');
     }
-    if (selectParts.length === 0) selectParts.push(buildEventCountSelect(resolvedCountMode));
+    if (selectParts.length === 0) selectParts.push(buildEventCountSelect(resolvedCountMode, group_by));
 
     const fromDate = parseSince(date_from);
     const toDate = date_to || today();
@@ -306,8 +325,11 @@ export class BaseAdapter {
       }
     }
 
-    let sql = `SELECT ${selectParts.join(', ')} FROM events WHERE ${whereParts.join(' AND ')}`;
-    if (group_by.length > 0) sql += ` GROUP BY ${group_by.join(', ')}`;
+    let sql = `WITH filtered AS (
+      SELECT * FROM events WHERE ${whereParts.join(' AND ')}
+    )
+    SELECT ${selectParts.join(', ')} FROM filtered current`;
+    if (group_by.length > 0) sql += ` GROUP BY ${group_by.map((column) => `current.${column}`).join(', ')}`;
 
     const defaultOrder = group_by.includes(GROUP_BY_FIELDS.DATE) ? GROUP_BY_FIELDS.DATE : metrics[0];
     const orderField = order_by && ALLOWED_ORDER_BY.includes(order_by) ? order_by : defaultOrder;

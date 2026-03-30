@@ -370,6 +370,46 @@ describe('BaseAdapter contract', () => {
     assert.equal(result.rows[0].event_count, 1);
   });
 
+  test('query collapses mixed session and no-session duplicates for the same user', async () => {
+    const now = Date.now();
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now, properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', timestamp: now + 1, properties: { path: '/' } });
+
+    const deduped = await adapter.query({
+      project: 'p',
+      metrics: ['event_count'],
+      group_by: ['event'],
+      filters: [{ field: 'event', op: 'eq', value: 'project_created' }],
+      count_mode: 'session_then_user',
+    });
+    const raw = await adapter.query({
+      project: 'p',
+      metrics: ['event_count'],
+      group_by: ['event'],
+      filters: [{ field: 'event', op: 'eq', value: 'project_created' }],
+      count_mode: 'raw',
+    });
+
+    assert.equal(deduped.rows[0].event_count, 1);
+    assert.equal(raw.rows[0].event_count, 2);
+  });
+
+  test('query counts distinct sessions and suppresses no-session fallback when sessions exist for that user', async () => {
+    const now = Date.now();
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now, properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's2', timestamp: now + 1, properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', timestamp: now + 2, properties: { path: '/' } });
+
+    const result = await adapter.query({
+      project: 'p',
+      metrics: ['event_count'],
+      filters: [{ field: 'event', op: 'eq', value: 'project_created' }],
+      count_mode: 'session_then_user',
+    });
+
+    assert.equal(result.rows[0].event_count, 2);
+  });
+
   test('query falls back to raw row identity when session_id and user_id are missing', async () => {
     const now = Date.now();
     await adapter.trackEvent({ project: 'p', event: 'anonymous_activation', timestamp: now });
@@ -399,6 +439,27 @@ describe('BaseAdapter contract', () => {
     const keyGenerated = result.rows.find(r => r.event === 'api_key_generated');
     assert.equal(created.event_count, 1);
     assert.equal(keyGenerated.event_count, 2);
+  });
+
+  test('query keeps mixed session and no-session rows separate when group_by includes session_id', async () => {
+    const now = Date.now();
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now, properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', timestamp: now + 1, properties: { path: '/' } });
+
+    const result = await adapter.query({
+      project: 'p',
+      metrics: ['event_count'],
+      group_by: ['session_id'],
+      order_by: 'session_id',
+      order: 'asc',
+      count_mode: 'session_then_user',
+    });
+
+    assert.equal(result.rows.length, 2);
+    assert.equal(result.rows[0].session_id, null);
+    assert.equal(result.rows[0].event_count, 1);
+    assert.equal(result.rows[1].session_id, 's1');
+    assert.equal(result.rows[1].event_count, 1);
   });
 
   test('query rejects invalid metric', async () => {
