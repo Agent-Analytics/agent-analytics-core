@@ -12,6 +12,11 @@ import { formatDate, today, parseSince, parseSinceMs } from './adapter.js';
 import { ulid } from '../ulid.js';
 import { AnalyticsError, ERROR_CODES } from '../errors.js';
 import {
+  buildEventInsertStatement,
+  buildIdentifyStatements,
+  buildSessionUpsertStatement,
+} from './identity-aware.js';
+import {
   GRANULARITY, VALID_GRANULARITIES,
   METRICS, ALLOWED_METRICS,
   GROUP_BY_FIELDS, ALLOWED_GROUP_BY,
@@ -49,78 +54,48 @@ export class BaseAdapter {
   // --- Session upsert SQL builder ---
 
   _sessionUpsertSqlAndParams(project, event_data) {
-    const ts = event_data.timestamp || Date.now();
-    const date = formatDate(ts);
-    const page = (event_data.properties && typeof event_data.properties === 'object')
-      ? (event_data.properties.path || event_data.properties.url || null)
-      : null;
-    const count = event_data._count || 1;
-
-    const sql = `INSERT INTO sessions (session_id, user_id, project_id, start_time, end_time, duration, entry_page, exit_page, event_count, is_bounce, date)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, 1, ?)
-       ON CONFLICT(session_id) DO UPDATE SET
-         start_time = MIN(sessions.start_time, excluded.start_time),
-         end_time = MAX(sessions.end_time, excluded.end_time),
-         duration = MAX(sessions.end_time, excluded.end_time) - MIN(sessions.start_time, excluded.start_time),
-         entry_page = CASE WHEN excluded.start_time < sessions.start_time THEN excluded.entry_page ELSE sessions.entry_page END,
-         exit_page = CASE WHEN excluded.end_time >= sessions.end_time THEN excluded.exit_page ELSE sessions.exit_page END,
-         event_count = sessions.event_count + excluded.event_count,
-         is_bounce = CASE WHEN sessions.event_count + excluded.event_count > 1 THEN 0 ELSE 1 END`;
-
-    const params = [
-      event_data.session_id,
-      event_data.user_id || null,
+    return buildSessionUpsertStatement({
       project,
-      ts, ts,
-      page, page,
-      count,
-      date,
-    ];
-
-    return { sql, params };
+      session_id: event_data.session_id,
+      user_id: event_data.user_id,
+      timestamp: event_data.timestamp,
+      properties: event_data.properties,
+      count: event_data._count || 1,
+    });
   }
 
   // --- Write methods ---
 
   async trackEvent({ project, event, properties, user_id, session_id, timestamp }) {
-    const ts = timestamp || Date.now();
-    const date = formatDate(ts);
-
-    const eventSql = `INSERT INTO events (id, project_id, event, properties, user_id, session_id, timestamp, date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
-    const eventParams = [
-      ulid(), project, event,
-      properties ? JSON.stringify(properties) : null,
-      user_id || null, session_id || null, ts, date,
-    ];
+    const eventStatement = buildEventInsertStatement({
+      id: ulid(),
+      project,
+      event,
+      properties,
+      user_id,
+      session_id,
+      timestamp,
+    });
 
     if (!session_id) {
-      return this._run(eventSql, eventParams);
+      return this._run(eventStatement.sql, eventStatement.params);
     }
 
-    const session = this._sessionUpsertSqlAndParams(project, { session_id, user_id, timestamp: ts, properties });
+    const session = this._sessionUpsertSqlAndParams(project, { session_id, user_id, timestamp, properties });
     return this._batch([
-      { sql: eventSql, params: eventParams },
+      eventStatement,
       { sql: session.sql, params: session.params },
     ]);
   }
 
   async trackBatch(events) {
     const stmts = [];
-    const eventSql = `INSERT INTO events (id, project_id, event, properties, user_id, session_id, timestamp, date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
 
     for (const e of events) {
-      const ts = e.timestamp || Date.now();
-      const date = formatDate(ts);
-      stmts.push({
-        sql: eventSql,
-        params: [
-          ulid(), e.project, e.event,
-          e.properties ? JSON.stringify(e.properties) : null,
-          e.user_id || null, e.session_id || null, ts, date,
-        ],
-      });
+      stmts.push(buildEventInsertStatement({
+        id: ulid(),
+        ...e,
+      }));
     }
 
     for (const e of events) {
@@ -618,27 +593,7 @@ export class BaseAdapter {
   }
 
   async identifyUser({ project, previous_id, canonical_id }) {
-    // Insert or update the identity mapping
-    await this._run(
-      `INSERT INTO identity_map (previous_id, canonical_id, project_id, created_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(previous_id, project_id) DO UPDATE SET
-         canonical_id = excluded.canonical_id,
-         created_at = excluded.created_at`,
-      [previous_id, canonical_id, project, Date.now()],
-    );
-
-    // Backfill events
-    await this._run(
-      `UPDATE events SET user_id = ? WHERE user_id = ? AND project_id = ?`,
-      [canonical_id, previous_id, project],
-    );
-
-    // Backfill sessions
-    await this._run(
-      `UPDATE sessions SET user_id = ? WHERE user_id = ? AND project_id = ?`,
-      [canonical_id, previous_id, project],
-    );
+    await this._batch(buildIdentifyStatements({ project, previous_id, canonical_id }));
   }
 
   async getHeatmap({ project, since }) {

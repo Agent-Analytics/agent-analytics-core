@@ -49,10 +49,15 @@ class MockD1 {
 
     // INSERT INTO events
     if (/^INSERT INTO events/i.test(trimmed)) {
+      const usesIdentityLookup = trimmed.includes('SELECT canonical_id FROM identity_map');
+      const userIdIndex = usesIdentityLookup ? 6 : 4;
+      const sessionIdIndex = usesIdentityLookup ? 7 : 5;
+      const timestampIndex = usesIdentityLookup ? 8 : 6;
+      const dateIndex = usesIdentityLookup ? 9 : 7;
       const row = {
         id: params[0], project_id: params[1], event: params[2],
-        properties: params[3], user_id: params[4], session_id: params[5],
-        timestamp: params[6], date: params[7],
+        properties: params[3], user_id: params[userIdIndex], session_id: params[sessionIdIndex],
+        timestamp: params[timestampIndex], date: params[dateIndex],
       };
       this.tables.events.push(row);
       return { success: true };
@@ -88,13 +93,19 @@ class MockD1 {
   }
 
   _upsertSession(params) {
-    // SQL: VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, 1, ?)
-    // 9 params: session_id, user_id, project_id, start_time, end_time, entry_page, exit_page, event_count, date
+    const usesIdentityLookup = params.length === 11;
     const data = {
-      session_id: params[0], user_id: params[1], project_id: params[2],
-      start_time: params[3], end_time: params[4], duration: 0,
-      entry_page: params[5], exit_page: params[6],
-      event_count: params[7], is_bounce: 1, date: params[8],
+      session_id: params[0],
+      user_id: usesIdentityLookup ? params[3] : params[1],
+      project_id: usesIdentityLookup ? params[4] : params[2],
+      start_time: usesIdentityLookup ? params[5] : params[3],
+      end_time: usesIdentityLookup ? params[6] : params[4],
+      duration: 0,
+      entry_page: usesIdentityLookup ? params[7] : params[5],
+      exit_page: usesIdentityLookup ? params[8] : params[6],
+      event_count: usesIdentityLookup ? params[9] : params[7],
+      is_bounce: 1,
+      date: usesIdentityLookup ? params[10] : params[8],
     };
 
     const idx = this.tables.sessions.findIndex(s => s.session_id === data.session_id);
@@ -469,13 +480,13 @@ describe('Session tracking - Handler endpoints', () => {
     assert.equal(body.events.length, 1, 'handler should filter by session_id');
   });
 
-  test('14. POST /query is no longer exposed by the OSS handler', async () => {
+  test('14. POST /query stays exposed by the OSS handler', async () => {
     const { response } = await handler(makeRequest('POST', '/query', {
       project: 'p',
       metrics: ['event_count'],
       group_by: ['session_id'],
     }));
-    assert.equal(response.status, 404);
+    assert.equal(response.status, 200);
   });
 });
 

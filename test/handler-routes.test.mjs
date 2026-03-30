@@ -8,6 +8,9 @@ function makeHandler(overrides = {}) {
       listProjects: async () => ['proj-a'],
       getStats: async () => ({ totals: { total_events: 1 } }),
       getEvents: async () => ([{ event: 'page_view' }]),
+      query: async () => ({ rows: [], count: 0 }),
+      getProperties: async () => ({ events: [], property_keys: [] }),
+      getPropertiesReceived: async () => ({ properties: [], sample_size: 10 }),
       ...overrides,
     },
     validateRead: () => ({ valid: true }),
@@ -23,13 +26,28 @@ test('core keeps OSS basic routes like stats and events', async () => {
   assert.equal(response.status, 200);
 });
 
-test('core no longer exposes richer read endpoints reserved for hosted paid', async () => {
+test('core keeps OSS query and properties routes but excludes hosted-only reads', async () => {
   const handler = makeHandler();
-  const removedRoutes = [
+  const keptRoutes = [
     'https://api.test/query',
     'https://api.test/properties?project=site-a',
-    'https://api.test/sessions?project=site-a',
     'https://api.test/properties/received?project=site-a',
+  ];
+
+  for (const url of keptRoutes) {
+    const init = url.endsWith('/query')
+      ? {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': 'aak_test' },
+          body: JSON.stringify({ project: 'site-a', metrics: ['event_count'] }),
+        }
+      : { headers: { 'X-API-Key': 'aak_test' } };
+    const { response } = await handler(new Request(url, init));
+    assert.equal(response.status, 200);
+  }
+
+  const removedRoutes = [
+    'https://api.test/sessions?project=site-a',
     'https://api.test/breakdown?project=site-a&property=path',
     'https://api.test/insights?project=site-a',
     'https://api.test/pages?project=site-a',
