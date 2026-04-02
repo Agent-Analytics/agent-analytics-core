@@ -109,7 +109,7 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
       return { response: json(errorResponse(ERROR_CODES.NOT_FOUND, 'not found'), 404) };
     } catch (err) {
       if (err instanceof AnalyticsError) {
-        return { response: json(errorResponse(err.code, err.message), err.status) };
+        return { response: json({ ...errorResponse(err.code, err.message), ...(err.details || {}) }, err.status) };
       }
       console.error('Error:', err);
       return { response: json(errorResponse(ERROR_CODES.INTERNAL_ERROR, 'internal error'), 500) };

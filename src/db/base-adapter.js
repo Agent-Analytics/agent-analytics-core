@@ -34,6 +34,26 @@ export function validatePropertyKey(key) {
   }
 }
 
+function getFilterFieldSuggestion(field) {
+  if (typeof field !== 'string') return null;
+  if (FILTERABLE_FIELDS.includes(field)) return null;
+  if (field.startsWith('properties.')) return null;
+  if (!/^[a-zA-Z0-9_]+$/.test(field)) return null;
+  return `properties.${field}`;
+}
+
+function invalidFilterMessage(index, reason, field, suggestion) {
+  if (reason === 'missing_keys') {
+    return `filters[${index}] must include field, op, and value`;
+  }
+
+  if (suggestion) {
+    return `invalid filter field: ${field}. Built-in fields are ${FILTERABLE_FIELDS.join(', ')}. Event properties must use properties.<key>, for example ${suggestion}`;
+  }
+
+  return `invalid filter field: ${field}. Built-in fields are ${FILTERABLE_FIELDS.join(', ')}. Event properties must use properties.<key>`;
+}
+
 function resolveCountMode(metrics, count_mode) {
   if (count_mode !== undefined && !ALLOWED_COUNT_MODES.includes(count_mode)) {
     throw new AnalyticsError(
@@ -275,6 +295,52 @@ export class BaseAdapter {
     return rows.map(e => ({ ...e, properties: e.properties ? JSON.parse(e.properties) : null }));
   }
 
+  async _getPropertiesForWindow({ project, fromDate, toDate = today() }) {
+    const [events, sample] = await Promise.all([
+      this._queryAll(
+        `SELECT event, COUNT(*) as count, COUNT(DISTINCT user_id) as unique_users,
+                MIN(date) as first_seen, MAX(date) as last_seen
+         FROM events WHERE project_id = ? AND date >= ? AND date <= ?
+         GROUP BY event ORDER BY count DESC`,
+        [project, fromDate, toDate],
+      ),
+
+      this._queryAll(
+        `SELECT DISTINCT properties FROM events
+         WHERE project_id = ? AND properties IS NOT NULL AND date >= ? AND date <= ?
+         ORDER BY timestamp DESC LIMIT ${DEFAULT_LIMIT}`,
+        [project, fromDate, toDate],
+      ),
+    ]);
+
+    const propKeys = new Set();
+    for (const row of sample) {
+      try {
+        const props = JSON.parse(row.properties);
+        Object.keys(props).forEach(k => propKeys.add(k));
+      } catch { /* skip malformed JSON */ }
+    }
+
+    return {
+      events,
+      property_keys: [...propKeys].sort(),
+    };
+  }
+
+  async _createInvalidFilterFieldError({ project, index, field, reason, fromDate, toDate }) {
+    const suggestion = getFilterFieldSuggestion(field);
+    const availableProperties = await this._getPropertiesForWindow({ project, fromDate, toDate });
+    return new AnalyticsError(
+      ERROR_CODES.INVALID_FILTER_FIELD,
+      invalidFilterMessage(index, reason, field, suggestion),
+      400,
+      {
+        suggested_field: suggestion,
+        available_properties: availableProperties,
+      },
+    );
+  }
+
   async query({ project, metrics = [METRICS.EVENT_COUNT], filters, date_from, date_to, group_by = [], order_by, order, limit = DEFAULT_LIMIT, count_mode }) {
     for (const m of metrics) {
       if (!ALLOWED_METRICS.includes(m)) throw new AnalyticsError(ERROR_CODES.INVALID_METRIC, `invalid metric: ${m}. allowed: ${ALLOWED_METRICS.join(', ')}`, 400);
@@ -299,9 +365,24 @@ export class BaseAdapter {
     const whereParts = ['project_id = ?', 'date >= ?', 'date <= ?'];
     const params = [project, fromDate, toDate];
 
-    if (filters && Array.isArray(filters)) {
-      for (const f of filters) {
-        if (!f.field || !f.op || f.value === undefined) continue;
+    if (filters !== undefined && !Array.isArray(filters)) {
+      throw new AnalyticsError(ERROR_CODES.INVALID_BODY, 'filters must be an array', 400);
+    }
+
+    if (filters) {
+      for (let index = 0; index < filters.length; index++) {
+        const f = filters[index];
+        if (!f || typeof f !== 'object' || Array.isArray(f) || !f.field || !f.op || f.value === undefined) {
+          throw await this._createInvalidFilterFieldError({
+            project,
+            index,
+            field: typeof f?.field === 'string' ? f.field : typeof f?.property === 'string' ? f.property : undefined,
+            reason: 'missing_keys',
+            fromDate,
+            toDate,
+          });
+        }
+
         const sqlOp = FILTER_OPS[f.op];
         if (!sqlOp) throw new AnalyticsError(ERROR_CODES.INVALID_FILTER_OP, `invalid filter op: ${f.op}. allowed: ${Object.keys(FILTER_OPS).join(', ')}`, 400);
 
@@ -321,6 +402,15 @@ export class BaseAdapter {
             whereParts.push(`json_extract(properties, '$.${propKey}') ${sqlOp} ?`);
           }
           params.push(f.value);
+        } else {
+          throw await this._createInvalidFilterFieldError({
+            project,
+            index,
+            field: f.field,
+            reason: 'invalid_field',
+            fromDate,
+            toDate,
+          });
         }
       }
     }
@@ -361,36 +451,7 @@ export class BaseAdapter {
 
   async getProperties({ project, since }) {
     const fromDate = parseSince(since);
-
-    const [events, sample] = await Promise.all([
-      this._queryAll(
-        `SELECT event, COUNT(*) as count, COUNT(DISTINCT user_id) as unique_users,
-                MIN(date) as first_seen, MAX(date) as last_seen
-         FROM events WHERE project_id = ? AND date >= ?
-         GROUP BY event ORDER BY count DESC`,
-        [project, fromDate],
-      ),
-
-      this._queryAll(
-        `SELECT DISTINCT properties FROM events
-         WHERE project_id = ? AND properties IS NOT NULL AND date >= ?
-         ORDER BY timestamp DESC LIMIT ${DEFAULT_LIMIT}`,
-        [project, fromDate],
-      ),
-    ]);
-
-    const propKeys = new Set();
-    for (const row of sample) {
-      try {
-        const props = JSON.parse(row.properties);
-        Object.keys(props).forEach(k => propKeys.add(k));
-      } catch { /* skip malformed JSON */ }
-    }
-
-    return {
-      events,
-      property_keys: [...propKeys].sort(),
-    };
+    return this._getPropertiesForWindow({ project, fromDate });
   }
 
   async getPropertiesReceived({ project, since, sample = DEFAULT_SAMPLE_SIZE }) {

@@ -56,7 +56,7 @@ test('ERROR_CODES is frozen and has all codes', () => {
   const expected = [
     'AUTH_REQUIRED', 'FORBIDDEN', 'NOT_FOUND', 'PROJECT_REQUIRED',
     'MISSING_FIELDS', 'INVALID_BODY', 'BATCH_TOO_LARGE', 'INVALID_METRIC',
-    'INVALID_GROUP_BY', 'INVALID_FILTER_OP', 'INVALID_PROPERTY_KEY',
+    'INVALID_GROUP_BY', 'INVALID_FILTER_OP', 'INVALID_FILTER_FIELD', 'INVALID_PROPERTY_KEY',
     'QUERY_FAILED', 'INTERNAL_ERROR',
   ];
   for (const code of expected) {
@@ -70,6 +70,11 @@ test('AnalyticsError has code, message, status', () => {
   assert.equal(err.code, 'TEST_CODE');
   assert.equal(err.message, 'test message');
   assert.equal(err.status, 418);
+});
+
+test('AnalyticsError can carry structured details', () => {
+  const err = new AnalyticsError('TEST_CODE', 'test message', 418, { suggested_field: 'properties.referrer' });
+  assert.deepEqual(err.details, { suggested_field: 'properties.referrer' });
 });
 
 // --- Handler error responses ---

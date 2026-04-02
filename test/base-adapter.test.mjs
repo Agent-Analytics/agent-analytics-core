@@ -12,6 +12,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { BaseAdapter } from '../src/db/base-adapter.js';
+import { ERROR_CODES } from '../src/errors.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const schema = readFileSync(resolve(__dirname, '../schema.sql'), 'utf-8');
@@ -659,6 +660,47 @@ describe('BaseAdapter contract', () => {
     await assert.rejects(
       () => adapter.query({ project: 'p', filters: [{ field: 'event', op: 'like', value: 'x' }] }),
       /invalid filter op/,
+    );
+  });
+
+  test('query rejects bare property fields and returns properties guidance', async () => {
+    await adapter.trackEvent({
+      project: 'p',
+      event: 'page_view',
+      properties: { referrer: 'https://clawflows.com/', utm_source: 'clawflows' },
+      user_id: 'u1',
+      timestamp: Date.now(),
+    });
+
+    await assert.rejects(
+      async () => adapter.query({ project: 'p', filters: [{ field: 'referrer', op: 'contains', value: 'clawflows.com' }] }),
+      (err) => {
+        assert.equal(err.code, ERROR_CODES.INVALID_FILTER_FIELD);
+        assert.match(err.message, /properties\.referrer/);
+        assert.equal(err.details.suggested_field, 'properties.referrer');
+        assert.deepEqual(err.details.available_properties.property_keys, ['referrer', 'utm_source']);
+        return true;
+      },
+    );
+  });
+
+  test('query rejects filters missing field, op, or value', async () => {
+    await adapter.trackEvent({
+      project: 'p',
+      event: 'page_view',
+      properties: { path: '/' },
+      user_id: 'u1',
+      timestamp: Date.now(),
+    });
+
+    await assert.rejects(
+      async () => adapter.query({ project: 'p', filters: [{ property: 'path', value: '/' }] }),
+      (err) => {
+        assert.equal(err.code, ERROR_CODES.INVALID_FILTER_FIELD);
+        assert.match(err.message, /must include field, op, and value/);
+        assert.deepEqual(err.details.available_properties.property_keys, ['path']);
+        return true;
+      },
     );
   });
 });

@@ -14,6 +14,7 @@ export const ERROR_CODES = Object.freeze({
   INVALID_COUNT_MODE: 'INVALID_COUNT_MODE',
   INVALID_GROUP_BY:   'INVALID_GROUP_BY',
   INVALID_FILTER_OP:  'INVALID_FILTER_OP',
+  INVALID_FILTER_FIELD: 'INVALID_FILTER_FIELD',
   INVALID_PROPERTY_KEY: 'INVALID_PROPERTY_KEY',
   QUERY_FAILED:       'QUERY_FAILED',
   INTERNAL_ERROR:     'INTERNAL_ERROR',
@@ -25,10 +26,11 @@ export class AnalyticsError extends Error {
    * @param {string} message - Human-readable explanation
    * @param {number} status  - HTTP status code
    */
-  constructor(code, message, status) {
+  constructor(code, message, status, details = undefined) {
     super(message);
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 
