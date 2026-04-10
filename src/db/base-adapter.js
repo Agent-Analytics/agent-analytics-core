@@ -27,6 +27,7 @@ import {
   DEFAULT_SAMPLE_SIZE, MIN_SAMPLE_SIZE, MAX_SAMPLE_SIZE,
   DAY_NAMES, VALID_PERIODS,
 } from '../constants.js';
+import { buildPathsQueries, buildPathsResponse, validatePathsOptions } from '../path-analytics.js';
 
 export function validatePropertyKey(key) {
   if (!key || key.length > 128 || !/^[a-zA-Z0-9_]+$/.test(key)) {
@@ -640,6 +641,24 @@ export class BaseAdapter {
     return type === 'exit'
       ? { exit_pages: rows }
       : { entry_pages: rows };
+  }
+
+  async getPaths(options) {
+    const normalized = validatePathsOptions(options);
+    const [entryPagesQuery, pathRowsQuery] = buildPathsQueries({
+      project: options.project,
+      fromDate: normalized.fromDate,
+      entryLimit: normalized.entryLimit,
+      candidateSessionCap: normalized.candidateSessionCap,
+    });
+
+    const entryPages = await this._queryAll(entryPagesQuery.sql, entryPagesQuery.params);
+    if (entryPages.length === 0) {
+      return buildPathsResponse(options.project, normalized, []);
+    }
+
+    const rows = await this._queryAll(pathRowsQuery.sql, pathRowsQuery.params);
+    return buildPathsResponse(options.project, normalized, rows);
   }
 
   async getSessionDistribution({ project, since }) {

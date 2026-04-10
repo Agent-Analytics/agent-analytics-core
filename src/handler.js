@@ -63,6 +63,7 @@ const ROUTES = {
   'GET /stats':               withProjectRead(handleStats),
   'GET /events':              withProjectRead(handleEvents),
   'POST /query':              withReadAuth(handleQuery),
+  'POST /paths':              withReadAuth(handlePaths),
   'GET /properties':          withProjectRead(handleProperties),
   'GET /properties/received': withProjectRead(handlePropertiesReceived),
 };
@@ -221,6 +222,20 @@ async function handleQuery({ request, db }) {
     if (err instanceof AnalyticsError) throw err;
     console.error('Query error:', err);
     return { response: json(errorResponse(ERROR_CODES.QUERY_FAILED, 'query failed'), 400) };
+  }
+}
+
+async function handlePaths({ request, db }) {
+  const body = await request.json();
+  if (!body.project) return { response: json(errorResponse(ERROR_CODES.PROJECT_REQUIRED, 'project required'), 400) };
+
+  try {
+    const result = await db.getPaths(body);
+    return { response: json(result) };
+  } catch (err) {
+    if (err instanceof AnalyticsError) throw err;
+    console.error('Paths error:', err);
+    return { response: json(errorResponse(ERROR_CODES.QUERY_FAILED, 'paths query failed'), 400) };
   }
 }
 

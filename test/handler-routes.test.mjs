@@ -10,6 +10,7 @@ function makeHandler(overrides = {}) {
       getStats: async () => ({ totals: { total_events: 1 } }),
       getEvents: async () => ([{ event: 'page_view' }]),
       query: async () => ({ rows: [], count: 0 }),
+      getPaths: async () => ({ project: 'site-a', goal_event: 'signup', period: { from: '2026-01-01', to: '2026-01-31' }, bounds: {}, entry_paths: [] }),
       getProperties: async () => ({ events: [], property_keys: [] }),
       getPropertiesReceived: async () => ({ properties: [], sample_size: 10 }),
       ...overrides,
@@ -31,16 +32,19 @@ test('core keeps OSS query and properties routes but excludes hosted-only reads'
   const handler = makeHandler();
   const keptRoutes = [
     'https://api.test/query',
+    'https://api.test/paths',
     'https://api.test/properties?project=site-a',
     'https://api.test/properties/received?project=site-a',
   ];
 
   for (const url of keptRoutes) {
-    const init = url.endsWith('/query')
+    const init = url.endsWith('/query') || url.endsWith('/paths')
       ? {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-API-Key': 'aak_test' },
-          body: JSON.stringify({ project: 'site-a', metrics: ['event_count'] }),
+          body: JSON.stringify(url.endsWith('/paths')
+            ? { project: 'site-a', goal_event: 'signup' }
+            : { project: 'site-a', metrics: ['event_count'] }),
         }
       : { headers: { 'X-API-Key': 'aak_test' } };
     const { response } = await handler(new Request(url, init));

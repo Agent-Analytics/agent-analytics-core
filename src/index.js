@@ -7,6 +7,16 @@ export { isBot, classifyBot } from './bot.js'
 export { safeEqual, includesSafe } from './crypto.js'
 export { ERROR_CODES, AnalyticsError, errorResponse } from './errors.js'
 export {
+  VALID_PATHS_SINCE,
+  PATHS_DEFAULTS,
+  PATHS_LIMITS,
+  PASSIVE_PATH_EVENTS,
+  validatePathsOptions,
+  buildPathsQueries,
+  buildPathsReport,
+  buildPathsResponse,
+} from './path-analytics.js'
+export {
   GRANULARITY, VALID_GRANULARITIES,
   METRICS, ALLOWED_METRICS,
   COUNT_MODES, ALLOWED_COUNT_MODES,
