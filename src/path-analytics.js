@@ -42,16 +42,40 @@ function sortNodes(nodes) {
 function finalizeChildren(nodeMap, pathLimit) {
   const nodes = sortNodes([...nodeMap.values()])
     .slice(0, pathLimit)
-    .map((node) => ({
-      type: node.type,
-      value: node.value,
-      sessions: node.sessions,
-      conversions: node.conversions,
-      conversion_rate: roundRate(node.conversions, node.sessions),
-      children: finalizeChildren(node.children, pathLimit),
-    }));
+    .map((node) => {
+      const finalized = {
+        type: node.type,
+        value: node.value,
+        sessions: node.sessions,
+        conversions: node.conversions,
+        conversion_rate: roundRate(node.conversions, node.sessions),
+        children: finalizeChildren(node.children, pathLimit),
+      };
+      if (node.exit_page !== undefined) finalized.exit_page = node.exit_page;
+      return finalized;
+    });
 
   return nodes;
+}
+
+function finalizeExitPages(exitMap) {
+  return [...exitMap.values()]
+    .sort((a, b) => {
+      if (b.sessions !== a.sessions) return b.sessions - a.sessions;
+      const aDropOffs = a.sessions - a.conversions;
+      const bDropOffs = b.sessions - b.conversions;
+      if (bDropOffs !== aDropOffs) return bDropOffs - aDropOffs;
+      if (b.conversions !== a.conversions) return b.conversions - a.conversions;
+      return a.exit_page.localeCompare(b.exit_page);
+    })
+    .map((exit) => ({
+      exit_page: exit.exit_page,
+      sessions: exit.sessions,
+      conversions: exit.conversions,
+      conversion_rate: roundRate(exit.conversions, exit.sessions),
+      drop_offs: exit.sessions - exit.conversions,
+      drop_off_rate: roundRate(exit.sessions - exit.conversions, exit.sessions),
+    }));
 }
 
 function normalizeNode(row, entryPage, goalEvent) {
@@ -71,6 +95,7 @@ function normalizeNode(row, entryPage, goalEvent) {
 function buildSessionPath(rows, { goalEvent, maxSteps }) {
   const entryPage = rows[0]?.entry_page || null;
   if (!entryPage) return null;
+  const exitPage = rows[0]?.exit_page || null;
 
   const nodes = [];
   let seenGoal = false;
@@ -100,12 +125,14 @@ function buildSessionPath(rows, { goalEvent, maxSteps }) {
   if (!seenGoal) {
     nodes.push({
       type: truncated ? 'truncated' : 'drop_off',
-      value: truncated ? 'truncated' : 'drop_off',
+      value: exitPage || 'unknown',
+      exit_page: exitPage,
     });
   }
 
   return {
     entry_page: entryPage,
+    exit_page: exitPage,
     nodes,
     converted: seenGoal,
   };
@@ -185,7 +212,7 @@ export function buildPathsQueries({ project, fromDate, entryLimit, candidateSess
               LIMIT ?
             ),
             candidate_sessions AS (
-              SELECT session_id, entry_page, start_time
+              SELECT session_id, entry_page, exit_page, start_time
               FROM sessions
               WHERE project_id = ?
                 AND date >= ?
@@ -196,6 +223,7 @@ export function buildPathsQueries({ project, fromDate, entryLimit, candidateSess
             )
             SELECT cs.session_id,
                    cs.entry_page,
+                   cs.exit_page,
                    e.event,
                    json_extract(e.properties, '$.path') as path,
                    e.timestamp
@@ -229,6 +257,7 @@ export function buildPathsReport(rows, { goalEvent, maxSteps, pathLimit }) {
         entry_page: path.entry_page,
         sessions: 0,
         conversions: 0,
+        exits: new Map(),
         children: new Map(),
       });
     }
@@ -236,18 +265,31 @@ export function buildPathsReport(rows, { goalEvent, maxSteps, pathLimit }) {
     const entry = entryMap.get(path.entry_page);
     entry.sessions += 1;
     if (path.converted) entry.conversions += 1;
+    const exitPage = path.exit_page || 'unknown';
+    if (!entry.exits.has(exitPage)) {
+      entry.exits.set(exitPage, {
+        exit_page: exitPage,
+        sessions: 0,
+        conversions: 0,
+      });
+    }
+    const exit = entry.exits.get(exitPage);
+    exit.sessions += 1;
+    if (path.converted) exit.conversions += 1;
 
     let cursor = entry.children;
     for (const node of path.nodes) {
-      const key = `${node.type}:${node.value}`;
+      const key = `${node.type}:${node.value}:${node.exit_page || ''}`;
       if (!cursor.has(key)) {
-        cursor.set(key, {
+        const newNode = {
           type: node.type,
           value: node.value,
           sessions: 0,
           conversions: 0,
           children: new Map(),
-        });
+        };
+        if (node.exit_page !== undefined) newNode.exit_page = node.exit_page;
+        cursor.set(key, newNode);
       }
       const current = cursor.get(key);
       current.sessions += 1;
@@ -262,6 +304,7 @@ export function buildPathsReport(rows, { goalEvent, maxSteps, pathLimit }) {
       sessions: entry.sessions,
       conversions: entry.conversions,
       conversion_rate: roundRate(entry.conversions, entry.sessions),
+      exit_pages: finalizeExitPages(entry.exits),
       tree: finalizeChildren(entry.children, pathLimit),
     }));
 

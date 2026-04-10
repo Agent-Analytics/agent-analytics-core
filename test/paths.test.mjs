@@ -43,6 +43,7 @@ function pathRows(rows) {
   return rows.map((row, index) => ({
     session_id: row.session_id,
     entry_page: row.entry_page,
+    exit_page: row.exit_page ?? null,
     event: row.event,
     path: row.path ?? null,
     timestamp: row.timestamp ?? index + 1,
@@ -66,6 +67,16 @@ describe('buildPathsReport', () => {
     assert.equal(result.entry_paths[0].entry_page, '/landing');
     assert.equal(result.entry_paths[0].sessions, 1);
     assert.equal(result.entry_paths[0].conversions, 1);
+    assert.deepEqual(result.entry_paths[0].exit_pages, [
+      {
+        exit_page: 'unknown',
+        sessions: 1,
+        conversions: 1,
+        conversion_rate: 1,
+        drop_offs: 0,
+        drop_off_rate: 0,
+      },
+    ]);
     assert.equal(result.entry_paths[0].tree[0].type, 'page');
     assert.equal(result.entry_paths[0].tree[0].value, '/pricing');
     assert.equal(result.entry_paths[0].tree[0].children[0].type, 'event');
@@ -95,6 +106,44 @@ describe('buildPathsReport', () => {
     assert.equal(result.entry_paths[0].tree[0].children[0].type, 'event');
     assert.equal(result.entry_paths[0].tree[0].children[0].value, 'cta_click');
     assert.equal(result.entry_paths[0].tree[0].children[0].children[0].type, 'drop_off');
+    assert.equal(result.entry_paths[0].tree[0].children[0].children[0].value, 'unknown');
+  });
+
+  test('attributes exit pages per entry page and splits drop-off terminals by exit page', () => {
+    const result = buildPathsReport(pathRows([
+      { session_id: 's1', entry_page: '/landing', exit_page: '/pricing', event: 'page_view', path: '/landing', timestamp: 1 },
+      { session_id: 's1', entry_page: '/landing', exit_page: '/pricing', event: 'page_view', path: '/pricing', timestamp: 2 },
+      { session_id: 's1', entry_page: '/landing', exit_page: '/pricing', event: 'signup', timestamp: 3 },
+      { session_id: 's2', entry_page: '/landing', exit_page: '/checkout', event: 'page_view', path: '/landing', timestamp: 4 },
+      { session_id: 's2', entry_page: '/landing', exit_page: '/checkout', event: 'page_view', path: '/pricing', timestamp: 5 },
+      { session_id: 's2', entry_page: '/landing', exit_page: '/checkout', event: 'cta_click', timestamp: 6 },
+      { session_id: 's3', entry_page: '/landing', exit_page: '/docs', event: 'page_view', path: '/landing', timestamp: 7 },
+      { session_id: 's3', entry_page: '/landing', exit_page: '/docs', event: 'page_view', path: '/pricing', timestamp: 8 },
+      { session_id: 's3', entry_page: '/landing', exit_page: '/docs', event: 'cta_click', timestamp: 9 },
+    ]), {
+      goalEvent: 'signup',
+      maxSteps: 5,
+      pathLimit: 5,
+    });
+
+    const entry = result.entry_paths[0];
+    assert.deepEqual(entry.exit_pages, [
+      { exit_page: '/checkout', sessions: 1, conversions: 0, conversion_rate: 0, drop_offs: 1, drop_off_rate: 1 },
+      { exit_page: '/docs', sessions: 1, conversions: 0, conversion_rate: 0, drop_offs: 1, drop_off_rate: 1 },
+      { exit_page: '/pricing', sessions: 1, conversions: 1, conversion_rate: 1, drop_offs: 0, drop_off_rate: 0 },
+    ]);
+
+    const cta = entry.tree[0].children.find((node) => node.type === 'event' && node.value === 'cta_click');
+    assert.equal(cta.children.length, 2);
+    assert.deepEqual(cta.children.map((node) => ({
+      type: node.type,
+      value: node.value,
+      exit_page: node.exit_page,
+      sessions: node.sessions,
+    })), [
+      { type: 'drop_off', value: '/checkout', exit_page: '/checkout', sessions: 1 },
+      { type: 'drop_off', value: '/docs', exit_page: '/docs', sessions: 1 },
+    ]);
   });
 
   test('marks long sessions as truncated when max steps is exceeded', () => {
@@ -170,6 +219,10 @@ describe('BaseAdapter.getPaths', () => {
     assert.equal(result.entry_paths[0].entry_page, '/landing');
     assert.equal(result.entry_paths[0].sessions, 2);
     assert.equal(result.entry_paths[0].conversions, 1);
+    assert.deepEqual(result.entry_paths[0].exit_pages, [
+      { exit_page: '/landing', sessions: 1, conversions: 0, conversion_rate: 0, drop_offs: 1, drop_off_rate: 1 },
+      { exit_page: '/pricing', sessions: 1, conversions: 1, conversion_rate: 1, drop_offs: 0, drop_off_rate: 0 },
+    ]);
     assert.equal(result.entry_paths[0].tree[0].value, '/pricing');
     assert.equal(result.entry_paths[0].tree[0].children[0].type, 'goal');
     assert.equal(result.entry_paths[0].tree[1].value, 'cta_click');
