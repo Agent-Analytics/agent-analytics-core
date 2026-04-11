@@ -216,6 +216,7 @@
   var queue = [];
   var flushTimer = null;
   var FLUSH_INTERVAL = 5000;
+  var MAX_BATCH_EVENTS = 100;
 
   function send(url, data) {
     if (navigator.sendBeacon) {
@@ -232,10 +233,13 @@
   function flush() {
     if (!queue.length || (consentRequired && !consentGranted)) return;
     var batch = queue.splice(0);
-    if (batch.length === 1) {
-      send(ENDPOINT, JSON.stringify(batch[0]));
-    } else {
-      send(ENDPOINT.replace('/track', '/track/batch'), JSON.stringify({ events: batch }));
+    while (batch.length) {
+      var chunk = batch.splice(0, MAX_BATCH_EVENTS);
+      if (chunk.length === 1) {
+        send(ENDPOINT, JSON.stringify(chunk[0]));
+      } else {
+        send(ENDPOINT.replace('/track', '/track/batch'), JSON.stringify({ events: chunk }));
+      }
     }
   }
 

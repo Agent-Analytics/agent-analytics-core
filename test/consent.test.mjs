@@ -18,12 +18,22 @@ function createConsentController(requireAtInit, storage) {
 
   var queue = [];
   var flushed = [];
+  var flushRequests = [];
   var identifySent = [];
   var scheduleFlushCalls = 0;
+  var MAX_BATCH_EVENTS = 100;
 
   function flush() {
     if (!queue.length || (consentRequired && !consentGranted)) return;
-    flushed.push.apply(flushed, queue.splice(0));
+    var batch = queue.splice(0);
+    while (batch.length) {
+      var chunk = batch.splice(0, MAX_BATCH_EVENTS);
+      flushed.push.apply(flushed, chunk);
+      flushRequests.push({
+        endpoint: chunk.length === 1 ? '/track' : '/track/batch',
+        events: chunk
+      });
+    }
   }
 
   function scheduleFlush() {
@@ -68,6 +78,7 @@ function createConsentController(requireAtInit, storage) {
     // Test helpers
     getQueue: function() { return queue; },
     getFlushed: function() { return flushed; },
+    getFlushRequests: function() { return flushRequests; },
     getIdentifySent: function() { return identifySent; },
     getScheduleFlushCalls: function() { return scheduleFlushCalls; },
     isConsentRequired: function() { return consentRequired; },
@@ -83,6 +94,8 @@ describe('consent not required (default)', () => {
     ctrl.track('page_view', { path: '/' });
     ctrl.flush();
     assert.equal(ctrl.getFlushed().length, 1);
+    assert.equal(ctrl.getFlushRequests().length, 1);
+    assert.equal(ctrl.getFlushRequests()[0].endpoint, '/track');
     assert.equal(ctrl.getQueue().length, 0);
   });
 
@@ -193,6 +206,24 @@ describe('grantConsent()', () => {
     assert.equal(storage['aa_consent'], 'granted');
     assert.equal(ctrl.getFlushed().length, 1); // just $consent
     assert.equal(ctrl.getFlushed()[0].event, '$consent');
+    assert.equal(ctrl.getFlushRequests()[0].endpoint, '/track');
+  });
+
+  test('grant flushes large consent buffers in batches of 100 or fewer', () => {
+    const ctrl = createConsentController(true);
+    for (let i = 0; i < 240; i++) {
+      ctrl.track(`event_${i}`, { index: i });
+    }
+
+    ctrl.grantConsent();
+
+    const requests = ctrl.getFlushRequests();
+    assert.deepEqual(requests.map((request) => request.events.length), [100, 100, 41]);
+    assert.ok(requests.every((request) => request.events.length <= 100));
+    assert.ok(requests.every((request) => request.endpoint === '/track/batch'));
+    assert.equal(ctrl.getFlushed().length, 241);
+    assert.equal(ctrl.getFlushed().at(-1).event, '$consent');
+    assert.equal(ctrl.getQueue().length, 0);
   });
 });
 
