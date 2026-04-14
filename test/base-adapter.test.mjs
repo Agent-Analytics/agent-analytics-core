@@ -571,6 +571,47 @@ describe('BaseAdapter contract', () => {
     assert.equal(result.rows[0].event_count, 1);
   });
 
+  test('query accepts numeric string timestamp filters', async () => {
+    const t1 = 1774526399000;
+    const t2 = 1774526400000;
+    await adapter.trackEvent({ project: 'p', event: 'click', user_id: 'u1', timestamp: t1 });
+    await adapter.trackEvent({ project: 'p', event: 'signup', user_id: 'u2', timestamp: t2 });
+
+    const result = await adapter.query({
+      project: 'p',
+      date_from: '2026-03-26',
+      filters: [{ field: 'timestamp', op: 'gte', value: String(t2) }],
+    });
+    assert.equal(result.rows[0].event_count, 1);
+  });
+
+  test('query accepts ISO string timestamp filters', async () => {
+    const t1 = Date.parse('2026-03-26T11:59:59Z');
+    const t2 = Date.parse('2026-03-26T12:00:00Z');
+    await adapter.trackEvent({ project: 'p', event: 'click', user_id: 'u1', timestamp: t1 });
+    await adapter.trackEvent({ project: 'p', event: 'signup', user_id: 'u2', timestamp: t2 });
+
+    const result = await adapter.query({
+      project: 'p',
+      date_from: '2026-03-26',
+      group_by: ['event'],
+      filters: [{ field: 'timestamp', op: 'gte', value: '2026-03-26T12:00:00Z' }],
+    });
+    assert.equal(result.rows.length, 1);
+    assert.equal(result.rows[0].event, 'signup');
+    assert.equal(result.rows[0].event_count, 1);
+  });
+
+  test('query rejects invalid timestamp filters', async () => {
+    await assert.rejects(
+      () => adapter.query({
+        project: 'p',
+        filters: [{ field: 'timestamp', op: 'gte', value: 'not-a-date' }],
+      }),
+      (err) => err.code === ERROR_CODES.INVALID_BODY && err.status === 400,
+    );
+  });
+
   // --- query: country in group_by ---
 
   test('query supports country in group_by', async () => {

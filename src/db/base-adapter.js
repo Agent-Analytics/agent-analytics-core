@@ -55,6 +55,27 @@ function invalidFilterMessage(index, reason, field, suggestion) {
   return `invalid filter field: ${field}. Built-in fields are ${FILTERABLE_FIELDS.join(', ')}. Event properties must use properties.<key>`;
 }
 
+function normalizeTimestampFilterValue(value) {
+  if (typeof value === 'number') {
+    if (Number.isFinite(value)) return value;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^-?\d+$/.test(trimmed)) {
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) return numeric;
+    }
+
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  throw new AnalyticsError(
+    ERROR_CODES.INVALID_BODY,
+    'invalid timestamp filter value: expected epoch milliseconds or ISO timestamp',
+    400,
+  );
+}
+
 function resolveCountMode(metrics, count_mode) {
   if (count_mode !== undefined && !ALLOWED_COUNT_MODES.includes(count_mode)) {
     throw new AnalyticsError(
@@ -388,12 +409,13 @@ export class BaseAdapter {
         if (!sqlOp) throw new AnalyticsError(ERROR_CODES.INVALID_FILTER_OP, `invalid filter op: ${f.op}. allowed: ${Object.keys(FILTER_OPS).join(', ')}`, 400);
 
         if (FILTERABLE_FIELDS.includes(f.field)) {
+          const filterValue = f.field === 'timestamp' ? normalizeTimestampFilterValue(f.value) : f.value;
           if (f.op === 'contains') {
             whereParts.push(`${f.field} LIKE '%' || ? || '%'`);
           } else {
             whereParts.push(`${f.field} ${sqlOp} ?`);
           }
-          params.push(f.value);
+          params.push(filterValue);
         } else if (f.field.startsWith('properties.')) {
           const propKey = f.field.replace('properties.', '');
           validatePropertyKey(propKey);
