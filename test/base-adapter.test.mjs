@@ -333,19 +333,48 @@ describe('BaseAdapter contract', () => {
     assert.equal(result.rows[0].event_count, 1);
   });
 
-  test('query defaults event_count to session_then_user dedupe', async () => {
-    const now = Date.now();
-    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now, properties: { path: '/' } });
-    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now + 1, properties: { path: '/' } });
+  test('query timestamp gte filter uses exact epoch-ms cutoff', async () => {
+    const cutoff = '2026-04-13T22:06:23Z';
+    await adapter.trackEvent({ project: 'p', event: 'login', user_id: 'before', timestamp: Date.parse('2026-04-13T21:35:09Z') });
+    await adapter.trackEvent({ project: 'p', event: 'login', user_id: 'after-1', timestamp: Date.parse('2026-04-14T10:51:25Z') });
+    await adapter.trackEvent({ project: 'p', event: 'login', user_id: 'after-2', timestamp: Date.parse('2026-04-14T16:58:28Z') });
 
     const result = await adapter.query({
       project: 'p',
-      filters: [{ field: 'event', op: 'eq', value: 'project_created' }],
+      metrics: ['event_count', 'unique_users'],
+      date_from: '2026-04-13',
+      date_to: '2026-04-14',
+      filters: [
+        { field: 'event', op: 'eq', value: 'login' },
+        { field: 'timestamp', op: 'gte', value: cutoff },
+      ],
     });
-    assert.equal(result.rows[0].event_count, 1);
+
+    assert.equal(result.rows[0].event_count, 2);
+    assert.equal(result.rows[0].unique_users, 2);
   });
 
-  test('query supports explicit raw count_mode for event_count', async () => {
+  test('query defaults event_count to raw rows for lifecycle events', async () => {
+    const now = Date.now();
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now, properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now + 1, properties: { path: '/' } });
+    await adapter.trackEvent({ project: 'p', event: 'login', user_id: 'u2', timestamp: now + 2 });
+    await adapter.trackEvent({ project: 'p', event: 'login', user_id: 'u2', timestamp: now + 3 });
+
+    const projectCreated = await adapter.query({
+      project: 'p',
+      filters: [{ field: 'event', op: 'eq', value: 'project_created' }],
+    });
+    const login = await adapter.query({
+      project: 'p',
+      filters: [{ field: 'event', op: 'eq', value: 'login' }],
+    });
+
+    assert.equal(projectCreated.rows[0].event_count, 2);
+    assert.equal(login.rows[0].event_count, 2);
+  });
+
+  test('query supports explicit session_then_user count_mode for event_count', async () => {
     const now = Date.now();
     await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now, properties: { path: '/' } });
     await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now + 1, properties: { path: '/' } });
@@ -354,12 +383,12 @@ describe('BaseAdapter contract', () => {
       project: 'p',
       metrics: ['event_count'],
       filters: [{ field: 'event', op: 'eq', value: 'project_created' }],
-      count_mode: 'raw',
+      count_mode: 'session_then_user',
     });
-    assert.equal(result.rows[0].event_count, 2);
+    assert.equal(result.rows[0].event_count, 1);
   });
 
-  test('query falls back to user_id dedupe when session_id is missing', async () => {
+  test('query supports explicit user_id dedupe when session_id is missing', async () => {
     const now = Date.now();
     await adapter.trackEvent({ project: 'p', event: 'api_key_generated', user_id: 'u1', timestamp: now });
     await adapter.trackEvent({ project: 'p', event: 'api_key_generated', user_id: 'u1', timestamp: now + 1 });
@@ -367,6 +396,7 @@ describe('BaseAdapter contract', () => {
     const result = await adapter.query({
       project: 'p',
       filters: [{ field: 'event', op: 'eq', value: 'api_key_generated' }],
+      count_mode: 'session_then_user',
     });
     assert.equal(result.rows[0].event_count, 1);
   });
@@ -423,7 +453,7 @@ describe('BaseAdapter contract', () => {
     assert.equal(result.rows[0].event_count, 2);
   });
 
-  test('query dedupes event_count within each group', async () => {
+  test('query dedupes event_count within each group when session_then_user is explicit', async () => {
     const now = Date.now();
     await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now, properties: { path: '/' } });
     await adapter.trackEvent({ project: 'p', event: 'project_created', user_id: 'u1', session_id: 's1', timestamp: now + 1, properties: { path: '/' } });
@@ -435,6 +465,7 @@ describe('BaseAdapter contract', () => {
       group_by: ['event'],
       order_by: 'event',
       order: 'asc',
+      count_mode: 'session_then_user',
     });
     const created = result.rows.find(r => r.event === 'project_created');
     const keyGenerated = result.rows.find(r => r.event === 'api_key_generated');

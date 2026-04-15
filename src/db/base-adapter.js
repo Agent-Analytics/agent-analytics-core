@@ -76,7 +76,7 @@ function normalizeTimestampFilterValue(value) {
   );
 }
 
-function resolveCountMode(metrics, count_mode) {
+function resolveCountMode(_metrics, count_mode) {
   if (count_mode !== undefined && !ALLOWED_COUNT_MODES.includes(count_mode)) {
     throw new AnalyticsError(
       ERROR_CODES.INVALID_COUNT_MODE,
@@ -86,7 +86,7 @@ function resolveCountMode(metrics, count_mode) {
   }
 
   if (count_mode !== undefined) return count_mode;
-  return metrics.includes(METRICS.EVENT_COUNT) ? COUNT_MODES.SESSION_THEN_USER : COUNT_MODES.RAW;
+  return COUNT_MODES.RAW;
 }
 
 function buildEventCountSelect(countMode, groupBy = []) {
