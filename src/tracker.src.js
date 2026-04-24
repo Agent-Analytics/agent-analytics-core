@@ -66,7 +66,6 @@
     var p = new URLSearchParams(location.search);
     var id = p.get('_aa');
     if (id) {
-      localStorage.setItem('aa_uid', id);
       // Strip _aa from URL
       p.delete('_aa');
       var clean = location.pathname + (p.toString() ? '?' + p.toString() : '') + location.hash;
@@ -78,14 +77,19 @@
 
   // --- Anon ID ---
   function getAnonId() {
-    var id = adoptCrossSubdomainId() || localStorage.getItem('aa_uid');
+    var id = localStorage.getItem('aa_uid');
     if (!id) {
       id = 'anon_' + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
       localStorage.setItem('aa_uid', id);
     }
     return id;
   }
-  var userId = getAnonId();
+  var linkedAnonId = adoptCrossSubdomainId();
+  var anonId = getAnonId();
+  var identifiedUserId = localStorage.getItem('aa_identified_uid') || null;
+  function currentUserId() {
+    return identifiedUserId || anonId;
+  }
 
   // --- Cross-subdomain link decoration ---
   if (linkedDomains) {
@@ -95,7 +99,7 @@
       try {
         var url = new URL(a.href);
         if (isSiblingDomain(url.hostname)) {
-          url.searchParams.set('_aa', userId);
+          url.searchParams.set('_aa', anonId);
           a.href = url.toString();
         }
       } catch(_) {}
@@ -230,6 +234,21 @@
     }).catch(function() {});
   }
 
+  function sendIdentify(previousId, nextId) {
+    if (previousId && nextId && previousId !== nextId && TOKEN && (!consentRequired || consentGranted)) {
+      var identifyUrl = ENDPOINT.replace('/track', '/identify');
+      send(identifyUrl, JSON.stringify({
+        token: TOKEN,
+        previous_id: previousId,
+        user_id: nextId
+      }));
+    }
+  }
+
+  if (linkedAnonId && linkedAnonId !== anonId) {
+    sendIdentify(linkedAnonId, anonId);
+  }
+
   function flush() {
     if (!queue.length || (consentRequired && !consentGranted)) return;
     var batch = queue.splice(0);
@@ -301,7 +320,7 @@
         token: TOKEN,
         event: event,
         properties: baseProps(properties),
-        user_id: userId,
+        user_id: currentUserId(),
         session_id: getSessionId(),
         timestamp: Date.now()
       });
@@ -309,18 +328,10 @@
     },
 
     identify: function(id) {
-      var previousId = userId;
-      userId = id;
-      localStorage.setItem('aa_uid', id);
+      identifiedUserId = id;
+      localStorage.setItem('aa_identified_uid', id);
       flush();
-      if (previousId && previousId !== id && TOKEN && (!consentRequired || consentGranted)) {
-        var identifyUrl = ENDPOINT.replace('/track', '/identify');
-        send(identifyUrl, JSON.stringify({
-          token: TOKEN,
-          previous_id: previousId,
-          user_id: id
-        }));
-      }
+      sendIdentify(anonId, id);
     },
 
     page: function(name) {
@@ -358,7 +369,7 @@
         // Invalid variant — fall through to normal hash
       }
 
-      var str = name + '.' + userId;
+      var str = name + '.' + currentUserId();
       var hash = 0;
       for (var j = 0; j < str.length; j++) {
         hash = ((hash << 5) - hash) + str.charCodeAt(j);
