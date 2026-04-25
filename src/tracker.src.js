@@ -234,14 +234,62 @@
     }).catch(function() {});
   }
 
-  function sendIdentify(previousId, nextId) {
-    if (previousId && nextId && previousId !== nextId && TOKEN && (!consentRequired || consentGranted)) {
-      var identifyUrl = ENDPOINT.replace('/track', '/identify');
-      send(identifyUrl, JSON.stringify({
+  function normalizeEmail(email) {
+    return String(email || '').trim().toLowerCase();
+  }
+
+  function toHex(buffer) {
+    var bytes = new Uint8Array(buffer);
+    var hex = '';
+    for (var i = 0; i < bytes.length; i++) {
+      hex += bytes[i].toString(16).padStart(2, '0');
+    }
+    return hex;
+  }
+
+  function sha256Hex(value) {
+    if (!window.crypto || !window.crypto.subtle || !window.TextEncoder) {
+      return Promise.resolve(null);
+    }
+    return window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)).then(toHex).catch(function() {
+      return null;
+    });
+  }
+
+  function sanitizeProps(props) {
+    var clean = {};
+    if (!props) return clean;
+    for (var key in props) {
+      if (!props.hasOwnProperty(key)) continue;
+      if (key === 'email') continue;
+      if (props[key] === undefined) continue;
+      clean[key] = props[key];
+    }
+    return clean;
+  }
+
+  function sendIdentify(previousId, nextId, traits) {
+    if (!previousId || !nextId || !TOKEN || (consentRequired && !consentGranted)) return;
+
+    var cleanTraits = sanitizeProps(traits);
+    var email = traits && traits.email ? normalizeEmail(traits.email) : '';
+    var sendPayload = function(emailHash) {
+      var payload = {
         token: TOKEN,
         previous_id: previousId,
         user_id: nextId
-      }));
+      };
+      if (emailHash) payload.email_hash = emailHash;
+      if (Object.keys(cleanTraits).length > 0) payload.traits = cleanTraits;
+      if (payload.email_hash || payload.traits || previousId !== nextId) {
+        send(ENDPOINT.replace('/track', '/identify'), JSON.stringify(payload));
+      }
+    };
+
+    if (email) {
+      sha256Hex(email).then(sendPayload);
+    } else {
+      sendPayload(null);
     }
   }
 
@@ -303,9 +351,11 @@
       for (var kf in ft) { if (ft.hasOwnProperty(kf)) p['first_' + kf] = ft[kf]; }
     } catch(_) {}
     // Merge global sticky props
-    for (var k1 in globalProps) { if (globalProps.hasOwnProperty(k1)) p[k1] = globalProps[k1]; }
+    var gp = sanitizeProps(globalProps);
+    for (var k1 in gp) { if (gp.hasOwnProperty(k1)) p[k1] = gp[k1]; }
     // Merge extra (event-specific overrides global)
-    if (extra) for (var k2 in extra) { if (extra.hasOwnProperty(k2)) p[k2] = extra[k2]; }
+    var ep = sanitizeProps(extra);
+    for (var k2 in ep) { if (ep.hasOwnProperty(k2)) p[k2] = ep[k2]; }
     return p;
   }
 
@@ -327,11 +377,13 @@
       scheduleFlush();
     },
 
-    identify: function(id) {
+    identify: function(id, traits) {
+      if (!id) return;
+      var previousId = currentUserId();
       identifiedUserId = id;
       localStorage.setItem('aa_identified_uid', id);
       flush();
-      sendIdentify(anonId, id);
+      sendIdentify(previousId, id, traits || {});
     },
 
     page: function(name) {
@@ -391,10 +443,11 @@
 
     set: function(props) {
       if (!props) return;
-      for (var k in props) {
-        if (props.hasOwnProperty(k)) {
+      var clean = sanitizeProps(props);
+      for (var k in clean) {
+        if (clean.hasOwnProperty(k)) {
           if (props[k] === null) delete globalProps[k];
-          else globalProps[k] = props[k];
+          else globalProps[k] = clean[k];
         }
       }
     },
