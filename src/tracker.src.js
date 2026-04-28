@@ -238,58 +238,54 @@
     return String(email || '').trim().toLowerCase();
   }
 
-  function toHex(buffer) {
-    var bytes = new Uint8Array(buffer);
-    var hex = '';
-    for (var i = 0; i < bytes.length; i++) {
-      hex += bytes[i].toString(16).padStart(2, '0');
-    }
-    return hex;
-  }
-
-  function sha256Hex(value) {
-    if (!window.crypto || !window.crypto.subtle || !window.TextEncoder) {
-      return Promise.resolve(null);
-    }
-    return window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)).then(toHex).catch(function() {
-      return null;
-    });
+  function isReservedEmailKey(key) {
+    return typeof key === 'string' && key.toLowerCase().indexOf('email') !== -1;
   }
 
   function sanitizeProps(props) {
+    if (Array.isArray(props)) {
+      var cleanArray = [];
+      for (var ai = 0; ai < props.length; ai++) {
+        var item = props[ai];
+        if (item && typeof item === 'object') cleanArray.push(sanitizeProps(item));
+        else if (item !== undefined) cleanArray.push(item);
+      }
+      return cleanArray;
+    }
     var clean = {};
-    if (!props) return clean;
+    if (!props || typeof props !== 'object') return clean;
     for (var key in props) {
       if (!props.hasOwnProperty(key)) continue;
-      if (key === 'email') continue;
+      if (isReservedEmailKey(key)) continue;
       if (props[key] === undefined) continue;
-      clean[key] = props[key];
+      if (props[key] && typeof props[key] === 'object') {
+        clean[key] = sanitizeProps(props[key]);
+      } else {
+        clean[key] = props[key];
+      }
     }
+    return clean;
+  }
+
+  function sanitizeIdentifyTraits(traits) {
+    var clean = sanitizeProps(traits);
+    var email = traits && traits.email ? normalizeEmail(traits.email) : '';
+    if (email) clean.email = email;
     return clean;
   }
 
   function sendIdentify(previousId, nextId, traits) {
     if (!previousId || !nextId || !TOKEN || (consentRequired && !consentGranted)) return;
 
-    var cleanTraits = sanitizeProps(traits);
-    var email = traits && traits.email ? normalizeEmail(traits.email) : '';
-    var sendPayload = function(emailHash) {
-      var payload = {
-        token: TOKEN,
-        previous_id: previousId,
-        user_id: nextId
-      };
-      if (emailHash) payload.email_hash = emailHash;
-      if (Object.keys(cleanTraits).length > 0) payload.traits = cleanTraits;
-      if (payload.email_hash || payload.traits || previousId !== nextId) {
-        send(ENDPOINT.replace('/track', '/identify'), JSON.stringify(payload));
-      }
+    var cleanTraits = sanitizeIdentifyTraits(traits);
+    var payload = {
+      token: TOKEN,
+      previous_id: previousId,
+      user_id: nextId
     };
-
-    if (email) {
-      sha256Hex(email).then(sendPayload);
-    } else {
-      sendPayload(null);
+    if (Object.keys(cleanTraits).length > 0) payload.traits = cleanTraits;
+    if (payload.traits || previousId !== nextId) {
+      send(ENDPOINT.replace('/track', '/identify'), JSON.stringify(payload));
     }
   }
 
