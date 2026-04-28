@@ -646,7 +646,10 @@ export const TRACKER_SOURCE_JS = `(function() {
     }
   };
 
-  // --- Declarative experiments ---
+  // --- Declarative client-side experiments ---
+  // Elements can opt in with data-aa-experiment plus data-aa-variant-* attributes.
+  // Variant rendering is intentionally text-only by default; raw HTML mutation is
+  // not supported here unless a future explicit opt-in path is designed separately.
   function applyDeclarativeExperiments() {
     var els = document.querySelectorAll('[data-aa-experiment]');
     for (var i = 0; i < els.length; i++) {
@@ -656,7 +659,7 @@ export const TRACKER_SOURCE_JS = `(function() {
       if (variant) {
         var attr = el.getAttribute('data-aa-variant-' + variant.toLowerCase());
         if (attr !== null) {
-          el.innerHTML = attr;
+          el.textContent = attr;
         }
       }
     }

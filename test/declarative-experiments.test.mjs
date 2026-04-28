@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { test, describe, beforeEach } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { test, describe } from 'node:test';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Tests for the declarative experiments feature (applyDeclarativeExperiments).
@@ -267,5 +272,28 @@ describe('applyDeclarativeExperiments', () => {
     } else {
       assert.equal(result.elements[1].textContent, 'CTA C');
     }
+  });
+});
+
+describe('declarative experiment tracker source', () => {
+  test('documents declarative experiments as an explicit client-side feature', () => {
+    const source = readFileSync(join(__dirname, '..', 'src', 'tracker.src.js'), 'utf-8');
+    assert.match(source, /Declarative client-side experiments/);
+    assert.match(source, /data-aa-experiment/);
+  });
+
+  test('uses textContent for default variant rendering instead of raw HTML mutation', () => {
+    const source = readFileSync(join(__dirname, '..', 'src', 'tracker.src.js'), 'utf-8');
+    assert.match(source, /el\.textContent\s*=\s*attr/);
+    assert.doesNotMatch(source, /el\.innerHTML\s*=\s*attr/);
+    assert.doesNotMatch(source, /el\.outerHTML\s*=\s*attr/);
+    assert.doesNotMatch(source, /insertAdjacentHTML\s*\(/);
+  });
+
+  test('built tracker does not use raw HTML mutation for default variant rendering', () => {
+    const built = readFileSync(join(__dirname, '..', 'src', 'tracker.js'), 'utf-8');
+    assert.doesNotMatch(built, /\.innerHTML\s*=/);
+    assert.doesNotMatch(built, /\.outerHTML\s*=/);
+    assert.doesNotMatch(built, /\.insertAdjacentHTML\s*\(/);
   });
 });
