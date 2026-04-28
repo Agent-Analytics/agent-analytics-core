@@ -13,11 +13,12 @@ function createStorage(initial = {}) {
   };
 }
 
-function createTrackerContext() {
+function createTrackerContext(options = {}) {
   const sends = [];
   const listeners = {};
-  const location = new URL('https://example.com/pricing?utm_source=test');
+  const location = new URL(options.url || 'https://example.com/pricing?utm_source=test');
   location.href = location.toString();
+  const forms = options.forms || [];
 
   const document = {
     currentScript: {
@@ -29,8 +30,12 @@ function createTrackerContext() {
     referrer: 'https://referrer.example/',
     title: 'Pricing',
     documentElement: { classList: { remove() {} } },
+    body: { textContent: options.bodyText || '' },
     addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
-    querySelectorAll() { return []; },
+    querySelectorAll(selector) {
+      if (selector === 'form') return forms;
+      return [];
+    },
   };
 
   const context = {
@@ -50,8 +55,8 @@ function createTrackerContext() {
       sendBeacon: undefined,
     },
     screen: { width: 1440, height: 900 },
-    localStorage: createStorage(),
-    sessionStorage: createStorage(),
+    localStorage: createStorage(options.localStorage),
+    sessionStorage: createStorage(options.sessionStorage),
     URL,
     URLSearchParams,
     Intl,
@@ -92,6 +97,30 @@ function parseSend(sends, path, predicate = () => true) {
 }
 
 describe('browser tracker identity cleanup', () => {
+  test('identify without traits sends no traits', () => {
+    const { context, sends } = createTrackerContext();
+    context.window.aa.identify('user_no_traits');
+
+    const payload = parseSend(sends, '/identify');
+    assert.equal(payload.user_id, 'user_no_traits');
+    assert.equal(Object.prototype.hasOwnProperty.call(payload, 'traits'), false);
+  });
+
+  test('explicit identify email is normalized and only sent on identify', () => {
+    const { context, sends, listeners } = createTrackerContext();
+    context.window.aa.identify('user_email', { email: ' USER@Example.COM ' });
+    context.window.aa.track('post_identify_event', { source: 'button' });
+    context.document.visibilityState = 'hidden';
+    for (const fn of listeners.visibilitychange || []) fn();
+
+    const identifyPayload = parseSend(sends, '/identify');
+    assert.deepEqual(identifyPayload.traits, { email: 'user@example.com' });
+
+    const trackPayload = parseSend(sends, '/track', (payload) => payload.event === 'post_identify_event');
+    assert.equal(JSON.stringify(trackPayload).includes('user@example.com'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(trackPayload.properties, 'email'), false);
+  });
+
   test('identify sends stable user_id with traits.email and no browser-side email_hash', () => {
     assert.equal(TRACKER_JS.includes('email_hash'), false, 'built tracker must not reference email_hash');
     assert.equal(TRACKER_JS.includes('SHA-256'), false, 'built tracker must not contain SHA-256 hashing code');
@@ -146,5 +175,51 @@ describe('browser tracker identity cleanup', () => {
     assert.equal(payload.properties.globalEmail, undefined);
     assert.deepEqual(payload.properties.nested, { keep: 'yes' });
     assert.deepEqual(payload.properties.array, [{ keep: 1 }]);
+  });
+
+  test('does not infer or send emails from URL, DOM, forms, local storage, or session storage', () => {
+    const form = {
+      tagName: 'FORM',
+      id: 'signup',
+      action: 'https://example.com/signup?email=form@example.com',
+      method: 'post',
+      className: 'lead-form',
+      getAttribute(name) { return name === 'name' ? 'newsletter' : null; },
+      hasAttribute() { return true; },
+      checkValidity() { return true; },
+    };
+    const { context, sends, listeners } = createTrackerContext({
+      url: 'https://example.com/pricing?email=url@example.com&utm_source=test',
+      bodyText: 'Contact dom@example.com for help',
+      forms: [form],
+      localStorage: {
+        email: 'local@example.com',
+        'aa:tok_1:email': 'scoped-local@example.com',
+        'aa:tok_1:ft': JSON.stringify({ utm_source: 'stored', email: 'first-touch@example.com' }),
+      },
+      sessionStorage: {
+        email: 'session@example.com',
+        'aa:tok_1:utm': JSON.stringify({ utm_source: 'session', email: 'session-utm@example.com' }),
+      },
+    });
+
+    context.window.aa.track('manual_event', { source: 'test' });
+    for (const fn of listeners.submit || []) fn({ target: form });
+    context.document.visibilityState = 'hidden';
+    for (const fn of listeners.visibilitychange || []) fn();
+
+    const serialized = sends.map((send) => send.body).join('\n');
+    for (const email of [
+      'url@example.com',
+      'dom@example.com',
+      'form@example.com',
+      'local@example.com',
+      'scoped-local@example.com',
+      'first-touch@example.com',
+      'session@example.com',
+      'session-utm@example.com',
+    ]) {
+      assert.equal(serialized.includes(email), false, `must not send inferred ${email}`);
+    }
   });
 });

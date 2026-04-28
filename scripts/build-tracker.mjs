@@ -3,7 +3,7 @@ import { transformSync } from 'esbuild';
 
 const src = readFileSync(new URL('../src/tracker.src.js', import.meta.url), 'utf8');
 
-const privacyHeader = '/*! Agent Analytics tracker | Source: /tracker.src.js | Privacy: no browser-side email hashing, hard fingerprinting, dynamic script loading, eval, document.write, or form value collection. */';
+const privacyHeader = '/*! Agent Analytics tracker | Source: /tracker.src.js | Privacy: no hard fingerprinting, dynamic script loading, eval, document.write, or form value collection. */';
 
 const { code } = transformSync(src, {
   minify: true,

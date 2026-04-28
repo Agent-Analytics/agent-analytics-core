@@ -28,7 +28,7 @@ test('core serves minified tracker with source and privacy header', async () => 
   const text = await response.text();
   assert.match(text, /^\/\*! Agent Analytics tracker/);
   assert.match(text, /Source: \/tracker\.src\.js/);
-  assert.match(text, /Privacy: no browser-side email hashing, hard fingerprinting, dynamic script loading, eval, document\.write, or form value collection\./);
+  assert.match(text, /Privacy: no hard fingerprinting, dynamic script loading, eval, document\.write, or form value collection\./);
 });
 
 test('core serves readable tracker source as javascript', async () => {

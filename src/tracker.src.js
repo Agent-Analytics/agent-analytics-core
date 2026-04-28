@@ -206,7 +206,7 @@
     if (hasNew) {
       sessionStore.setItem('utm', JSON.stringify(u));
     } else {
-      try { u = JSON.parse(sessionStore.getItem('utm') || '{}'); } catch(_) { u = {}; }
+      try { u = sanitizeProps(JSON.parse(sessionStore.getItem('utm') || '{}')); } catch(_) { u = {}; }
     }
     if (hasNew && !localStore.getItem('ft')) {
       localStore.setItem('ft', JSON.stringify(u));
@@ -420,7 +420,7 @@
     for (var k in utm) { if (utm.hasOwnProperty(k)) p[k] = utm[k]; }
     // Merge first-touch attribution
     try {
-      var ft = JSON.parse(localStore.getItem('ft') || '{}');
+      var ft = sanitizeProps(JSON.parse(localStore.getItem('ft') || '{}'));
       for (var kf in ft) { if (ft.hasOwnProperty(kf)) p['first_' + kf] = ft[kf]; }
     } catch(_) {}
     // Merge global sticky props

@@ -6,8 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(__dirname, '..', 'src', 'tracker.src.js'), 'utf8');
-const generated = readFileSync(join(__dirname, '..', 'src', 'tracker.js'), 'utf8')
-  .replace(/\/\*! Agent Analytics tracker[^\n]*\n?/, '');
+const generated = readFileSync(join(__dirname, '..', 'src', 'tracker.js'), 'utf8');
 const trackerText = `${source}\n${generated}`;
 
 function assertNoPattern(pattern, description) {
