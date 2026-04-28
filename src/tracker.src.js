@@ -152,6 +152,15 @@
   }
   var utm = getUtm();
 
+  function sanitizeUrlLike(value) {
+    if (!value) return '';
+    try {
+      var u = new URL(value, location.href);
+      if (u.protocol === 'http:' || u.protocol === 'https:') return u.origin + u.pathname;
+    } catch(_) {}
+    return '';
+  }
+
   // --- Browser & OS detection ---
   function detect(ua) {
     var b = 'Unknown', bv = '', os = 'Unknown';
@@ -323,10 +332,10 @@
   // --- Common properties ---
   function baseProps(extra) {
     var p = {
-      url: location.href,
+      url: sanitizeUrlLike(location.href),
       path: location.pathname,
       hostname: location.hostname,
-      referrer: document.referrer,
+      referrer: sanitizeUrlLike(document.referrer),
       title: document.title,
       screen: screen.width + 'x' + screen.height,
       language: navigator.language || '',
@@ -572,7 +581,7 @@
         var url = new URL(a.href);
         if (url.hostname && url.hostname !== location.hostname && url.protocol.startsWith('http')) {
           aa.track('outgoing_link', {
-            href: a.href,
+            href: sanitizeUrlLike(a.href),
             text: (a.textContent || '').trim().slice(0, 200),
             hostname: url.hostname
           });
@@ -598,7 +607,7 @@
       };
       if (tag === 'a') {
         var href = el.href || '';
-        props.href = href;
+        props.href = sanitizeUrlLike(href);
         try {
           var u = new URL(href);
           if (/^(mailto|tel|javascript):/.test(href)) return;
@@ -646,7 +655,7 @@
       aa.track('$form_submit', {
         id: form.id || '',
         name: form.getAttribute('name') || '',
-        action: (form.action || '').slice(0, 500),
+        action: sanitizeUrlLike(form.action).slice(0, 500),
         method: (form.method || 'GET').toUpperCase(),
         classes: (form.className && typeof form.className === 'string' ? form.className : '').slice(0, 200)
       });
@@ -668,7 +677,7 @@
       if (is404) {
         aa.track('$404', {
           path: location.pathname,
-          referrer: document.referrer,
+          referrer: sanitizeUrlLike(document.referrer),
           title: document.title
         });
       }
