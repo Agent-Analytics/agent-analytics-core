@@ -96,7 +96,7 @@ export default {
 <script defer src="https://your-server.com/tracker.js" data-project="my-site" data-token="YOUR_TOKEN"></script>
 ```
 
-Auto-tracks page views, with sanitized URL/referrer, screen size, browser, OS, device type, and standard UTM params. Events are batched and flushed every 5s, or immediately on page hide via `sendBeacon`. SPA route listeners are opt-in instead of enabled by default.
+Tracks the initial page view by default, with sanitized URL/referrer, screen size, browser, OS, device type, and standard UTM params. SPA route-change tracking is explicit opt-in: add `data-track-spa="true"` to listen for URL changes via patched `pushState`/`replaceState`, `popstate`, and `hashchange`. Events are batched and flushed every 5s, or immediately on page hide via `sendBeacon`.
 
 On `localhost` and `127.0.0.1`, the tracker skips all network requests and logs events to the browser console instead (prefixed `[aa-dev]`), so development traffic never pollutes production data.
 
