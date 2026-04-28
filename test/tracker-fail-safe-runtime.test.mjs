@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { describe, test } from 'node:test';
 import vm from 'node:vm';
 import { TRACKER_JS } from '../src/tracker.js';
@@ -90,7 +91,14 @@ function createTrackerContext(options = {}) {
     Error,
     Promise,
     Blob,
-    setTimeout(fn) { if (typeof fn === 'function') fn(); return 1; },
+    setTimeout(fn) {
+      if (options.deferTimers) {
+        (listeners.__timers ||= []).push(fn);
+        return listeners.__timers.length;
+      }
+      if (typeof fn === 'function') fn();
+      return 1;
+    },
     clearTimeout() {},
     setInterval() { return 1; },
     clearInterval() {},
@@ -123,6 +131,18 @@ function sentEvents(runtime) {
   return runtime.sends
     .filter((send) => send.url.endsWith('/track'))
     .map((send) => JSON.parse(send.body));
+}
+
+function sentTrackEvents(runtime) {
+  const events = [];
+  for (const send of runtime.sends) {
+    if (send.url.endsWith('/track')) {
+      events.push(JSON.parse(send.body));
+    } else if (send.url.endsWith('/track/batch')) {
+      events.push(...JSON.parse(send.body).events);
+    }
+  }
+  return events;
 }
 
 describe('browser tracker fail-safe runtime', () => {
@@ -171,6 +191,41 @@ describe('browser tracker fail-safe runtime', () => {
     assert.equal(payload.properties.self, '[Circular]');
     assert.ok(payload.properties.huge.length <= 4096, 'huge strings should be truncated');
     assert.ok(JSON.stringify(payload).length <= 70_000, 'serialized payload should be bounded');
+  });
+
+  test('oversized batches degrade instead of dropping sendable events', () => {
+    const runtime = createTrackerContext({ deferTimers: true });
+    loadTracker(runtime);
+    const body = 'x'.repeat(4096);
+    for (let i = 0; i < 20; i += 1) {
+      runtime.context.window.aa.track(`degraded_${i}`, { body });
+    }
+    flush(runtime);
+
+    const delivered = sentTrackEvents(runtime).filter((event) => event.event.startsWith('degraded_'));
+    assert.equal(delivered.length, 20, 'all individually sendable events should be delivered');
+    for (const send of runtime.sends.filter((item) => item.url.includes('/track'))) {
+      assert.ok(Buffer.byteLength(send.body, 'utf8') <= 64 * 1024, 'encoded payload should fit keepalive limit');
+    }
+  });
+
+  test('payload limit is enforced by encoded byte length', () => {
+    const runtime = createTrackerContext();
+    loadTracker(runtime);
+    const properties = {};
+    for (let i = 0; i < 11; i += 1) properties[`field_${i}`] = '€'.repeat(2000);
+
+    assert.doesNotThrow(() => runtime.context.window.aa.track('encoded_oversize', properties));
+    flush(runtime);
+
+    for (const send of runtime.sends.filter((item) => item.url.includes('/track'))) {
+      assert.ok(Buffer.byteLength(send.body, 'utf8') <= 64 * 1024, 'encoded payload should fit keepalive limit');
+    }
+    assert.equal(
+      sentTrackEvents(runtime).some((event) => event.event === 'encoded_oversize'),
+      false,
+      'encoded-oversize event should not be sent even when JS string length is under the limit',
+    );
   });
 
   test('loading twice does not double-track initial page views or double-register SPA automation', () => {

@@ -338,9 +338,22 @@ export const TRACKER_SOURCE_JS = `(function() {
   var MAX_SANITIZE_DEPTH = 8;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
 
+  function encodedByteLength(data) {
+    try {
+      if (typeof Blob !== 'undefined') {
+        var blob = new Blob([data]);
+        if (typeof blob.size === 'number') return blob.size;
+      }
+    } catch { /* ignore Blob failures */ }
+    try {
+      if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(data).length;
+    } catch { /* ignore TextEncoder failures */ }
+    return String(data || '').length;
+  }
+
   function send(url, data) {
     try {
-      if (typeof data === 'string' && data.length > MAX_PAYLOAD_BYTES) return;
+      if (typeof data === 'string' && encodedByteLength(data) > MAX_PAYLOAD_BYTES) return;
       if (navigator.sendBeacon) {
         try {
           if (navigator.sendBeacon(url, new Blob([data], {type: 'text/plain'}))) return;
@@ -363,7 +376,7 @@ export const TRACKER_SOURCE_JS = `(function() {
   function safeStringify(value) {
     try {
       var data = JSON.stringify(value);
-      if (data && data.length <= MAX_PAYLOAD_BYTES) return data;
+      if (data && encodedByteLength(data) <= MAX_PAYLOAD_BYTES) return data;
     } catch { /* ignore serialization failures */ }
     return null;
   }
@@ -443,18 +456,32 @@ export const TRACKER_SOURCE_JS = `(function() {
     sendIdentify(linkedAnonId, anonId);
   }
 
+  function sendEvent(event) {
+    var eventData = safeStringify(event);
+    if (eventData) send(ENDPOINT, eventData);
+  }
+
+  function sendEventBatch(events) {
+    if (!events.length) return;
+    if (events.length === 1) {
+      sendEvent(events[0]);
+      return;
+    }
+    var batchData = safeStringify({ events: events });
+    if (batchData) {
+      send(ENDPOINT.replace('/track', '/track/batch'), batchData);
+      return;
+    }
+    var midpoint = Math.ceil(events.length / 2);
+    sendEventBatch(events.slice(0, midpoint));
+    sendEventBatch(events.slice(midpoint));
+  }
+
   function flush() {
     if (!queue.length || (consentRequired && !consentGranted)) return;
     var batch = queue.splice(0);
     while (batch.length) {
-      var chunk = batch.splice(0, MAX_BATCH_EVENTS);
-      if (chunk.length === 1) {
-        var eventData = safeStringify(chunk[0]);
-        if (eventData) send(ENDPOINT, eventData);
-      } else {
-        var batchData = safeStringify({ events: chunk });
-        if (batchData) send(ENDPOINT.replace('/track', '/track/batch'), batchData);
-      }
+      sendEventBatch(batch.splice(0, MAX_BATCH_EVENTS));
     }
   }
 
