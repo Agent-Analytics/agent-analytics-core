@@ -25,7 +25,6 @@ function classifyClick(el, hasDeclarativeEvent, locationHostname) {
 
   var props = {
     tag: tag,
-    text: (el.textContent || '').trim().slice(0, 200),
     id: el.id || '',
     classes: (el.className && typeof el.className === 'string' ? el.className : '').slice(0, 200),
   };
@@ -58,7 +57,7 @@ describe('click tracking links', () => {
     assert.equal(props.tag, 'a');
     assert.equal(props.href, 'https://example.com/about');
     assert.equal(props.is_external, false);
-    assert.equal(props.text, 'About');
+    assert.equal(props.text, undefined);
     assert.equal(props.id, 'nav-about');
     assert.equal(props.classes, 'nav-link');
   });
@@ -140,7 +139,7 @@ describe('click tracking buttons', () => {
     );
     assert.equal(props.tag, 'button');
     assert.equal(props.type, 'submit');
-    assert.equal(props.text, 'Submit');
+    assert.equal(props.text, undefined);
     assert.equal(props.id, 'btn-submit');
     assert.equal(props.classes, 'btn primary');
     assert.equal(props.href, undefined);
@@ -175,14 +174,6 @@ describe('click tracking buttons', () => {
 // --- Truncation ---
 
 describe('click tracking truncation', () => {
-  test('text truncated to 200 chars', () => {
-    const props = classifyClick(
-      { tagName: 'BUTTON', type: 'button', textContent: 'x'.repeat(500), id: '', className: '' },
-      false, 'example.com'
-    );
-    assert.equal(props.text.length, 200);
-  });
-
   test('classes truncated to 200 chars', () => {
     const props = classifyClick(
       { tagName: 'BUTTON', type: 'button', textContent: 'Click', id: '', className: 'c'.repeat(500) },
@@ -191,12 +182,12 @@ describe('click tracking truncation', () => {
     assert.equal(props.classes.length, 200);
   });
 
-  test('text is trimmed', () => {
+  test('text is not collected', () => {
     const props = classifyClick(
       { tagName: 'BUTTON', type: 'button', textContent: '  Click Me  ', id: '', className: '' },
       false, 'example.com'
     );
-    assert.equal(props.text, 'Click Me');
+    assert.equal(props.text, undefined);
   });
 });
 

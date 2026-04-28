@@ -116,24 +116,30 @@ function lastPayload(runtime, eventName) {
   return matches.at(-1);
 }
 
-function makeAnchor(href, text = 'Go') {
+function makeAnchor(href, text = 'Go', attrs = {}) {
   return {
     href,
     textContent: text,
     id: '',
     className: '',
     tagName: 'A',
-    closest(selector) { return selector === 'a' || selector === 'a, button' ? this : null; }
+    getAttribute(name) { return attrs[name] || null; },
+    attributes: Object.entries(attrs).map(([name, value]) => ({ name, value })),
+    closest(selector) {
+      if (selector === '[data-aa-event]') return attrs['data-aa-event'] ? this : null;
+      return selector === 'a' || selector === 'a, button' ? this : null;
+    }
   };
 }
 
-function makeForm(action) {
+function makeForm(action, extra = {}) {
   return {
     tagName: 'FORM',
     id: 'lead',
     action,
     method: 'post',
     className: '',
+    elements: extra.elements || [],
     getAttribute(name) { return name === 'name' ? 'lead-form' : null; },
     hasAttribute(name) { return name === 'novalidate'; },
     checkValidity() { return true; }
@@ -171,6 +177,26 @@ describe('tracker URL/referrer sanitization contract', () => {
     assert.doesNotMatch(JSON.stringify(payload.properties), /invite=secret|#top/);
   });
 
+  test('outgoing link payload does not include visible text by default', () => {
+    const runtime = runTracker({ attrs: { 'data-track-outgoing': 'true' } });
+    const link = makeAnchor('https://other.example/pricing', 'Secret enterprise account');
+    for (const handler of runtime.events.document.click || []) handler({ target: link });
+
+    const payload = lastPayload(runtime, 'outgoing_link');
+    assert.equal(payload.event, 'outgoing_link');
+    assert.equal(payload.properties.text, undefined);
+    assert.doesNotMatch(JSON.stringify(payload.properties), /Secret enterprise account/);
+  });
+
+  test('outgoing link tracking skips developer-authored data-aa-event elements', () => {
+    const runtime = runTracker({ attrs: { 'data-track-outgoing': 'true' } });
+    const link = makeAnchor('https://other.example/pricing', 'External', { 'data-aa-event': 'cta_click' });
+    for (const handler of runtime.events.document.click || []) handler({ target: link });
+
+    const flushed = flushedEvents(runtime);
+    assert.equal(flushed.some((payload) => payload.event === 'outgoing_link'), false);
+  });
+
   test('click tracking link href omits query string and hash', () => {
     const runtime = runTracker({ attrs: { 'data-track-clicks': 'true' } });
     const link = makeAnchor('https://example.com/account?session=secret#billing', 'Account');
@@ -182,6 +208,35 @@ describe('tracker URL/referrer sanitization contract', () => {
     assert.doesNotMatch(JSON.stringify(payload.properties), /session=secret|#billing/);
   });
 
+  test('click tracking payload does not include visible text by default', () => {
+    const runtime = runTracker({ attrs: { 'data-track-clicks': 'true' } });
+    const button = {
+      tagName: 'BUTTON',
+      textContent: 'Delete private workspace',
+      id: 'danger',
+      className: 'btn',
+      type: 'button',
+      closest(selector) { return selector === 'a, button' ? this : null; }
+    };
+    for (const handler of runtime.events.document.click || []) handler({ target: button });
+
+    const payload = lastPayload(runtime, '$click');
+    assert.equal(payload.event, '$click');
+    assert.equal(payload.properties.text, undefined);
+    assert.doesNotMatch(JSON.stringify(payload.properties), /Delete private workspace/);
+  });
+
+  test('download href uses URL sanitizer and omits query string and hash', () => {
+    const runtime = runTracker({ attrs: { 'data-track-downloads': 'true' } });
+    const link = makeAnchor('https://cdn.example/reports/export.pdf?token=secret#download', 'Download');
+    for (const handler of runtime.events.document.click || []) handler({ target: link });
+
+    const payload = lastPayload(runtime, '$download');
+    assert.equal(payload.event, '$download');
+    assert.equal(payload.properties.href, 'https://cdn.example/reports/export.pdf');
+    assert.doesNotMatch(JSON.stringify(payload.properties), /token=secret|#download/);
+  });
+
   test('form submit action omits query string and hash', () => {
     const runtime = runTracker({ attrs: { 'data-track-forms': 'true' } });
     const form = makeForm('https://example.com/submit?csrf=secret#form');
@@ -190,6 +245,22 @@ describe('tracker URL/referrer sanitization contract', () => {
     const payload = lastPayload(runtime, '$form_submit');
     assert.equal(payload.event, '$form_submit');
     assert.equal(payload.properties.action, 'https://example.com/submit');
+    assert.doesNotMatch(JSON.stringify(payload.properties), /csrf=secret|#form/);
+  });
+
+  test('form submit tracking remains metadata-only and does not read field values', () => {
+    const runtime = runTracker({ attrs: { 'data-track-forms': 'true' } });
+    const secretField = {};
+    Object.defineProperty(secretField, 'value', {
+      get() { throw new Error('form field value should not be read'); }
+    });
+    const form = makeForm('https://example.com/submit?csrf=secret#form', { elements: [secretField] });
+    for (const handler of runtime.events.document.submit || []) handler({ target: form });
+
+    const payload = lastPayload(runtime, '$form_submit');
+    assert.equal(payload.event, '$form_submit');
+    assert.equal(payload.properties.form_data, undefined);
+    assert.equal(payload.properties.fields, undefined);
     assert.doesNotMatch(JSON.stringify(payload.properties), /csrf=secret|#form/);
   });
 

@@ -650,12 +650,12 @@
     document.addEventListener('click', function(e) {
       var a = e.target.closest ? e.target.closest('a') : null;
       if (!a || !a.href) return;
+      if (a.closest && a.closest('[data-aa-event]')) return;
       try {
         var url = new URL(a.href);
         if (url.hostname && url.hostname !== location.hostname && url.protocol.startsWith('http')) {
           aa.track('outgoing_link', {
             href: sanitizeUrlLike(a.href),
-            text: (a.textContent || '').trim().slice(0, 200),
             hostname: url.hostname
           });
         }
@@ -674,7 +674,6 @@
       var tag = el.tagName.toLowerCase();
       var props = {
         tag: tag,
-        text: (el.textContent || '').trim().slice(0, 200),
         id: el.id || '',
         classes: (el.className && typeof el.className === 'string' ? el.className : '').slice(0, 200)
       };
@@ -709,7 +708,7 @@
         var m = path.match(DL_EXT);
         if (m) {
           aa.track('$download', {
-            href: url.origin + url.pathname,
+            href: sanitizeUrlLike(a.href),
             filename: path.split('/').pop(),
             extension: m[1].toLowerCase()
           });
