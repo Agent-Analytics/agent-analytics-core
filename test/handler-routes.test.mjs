@@ -20,6 +20,28 @@ function makeHandler(overrides = {}) {
   });
 }
 
+test('core serves minified tracker with source and privacy header', async () => {
+  const handler = makeHandler();
+  const { response } = await handler(new Request('https://api.test/tracker.js'));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Content-Type'), 'application/javascript');
+  const text = await response.text();
+  assert.match(text, /^\/\*! Agent Analytics tracker/);
+  assert.match(text, /Source: \/tracker\.src\.js/);
+  assert.match(text, /Privacy: no browser-side email hashing, hard fingerprinting, dynamic script loading, eval, document\.write, or form value collection\./);
+});
+
+test('core serves readable tracker source as javascript', async () => {
+  const handler = makeHandler();
+  const { response } = await handler(new Request('https://api.test/tracker.src.js'));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Content-Type'), 'application/javascript');
+  const text = await response.text();
+  assert.match(text, /\(function\(\) \{/);
+  assert.match(text, /'use strict';/);
+  assert.match(text, /function getAnonId\(\)/);
+});
+
 test('core keeps OSS basic routes like stats and events', async () => {
   const handler = makeHandler();
   const { response } = await handler(new Request('https://api.test/stats?project=site-a', {

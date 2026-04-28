@@ -6,6 +6,7 @@
  */
 
 import { TRACKER_JS } from './tracker.js';
+import { TRACKER_SOURCE_JS } from './tracker-source.js';
 import { isBot } from './bot.js';
 import { AnalyticsError, ERROR_CODES, errorResponse } from './errors.js';
 import { GRANULARITY, DEFAULT_LIMIT, MAX_LIMIT, MAX_BATCH_SIZE, VALID_PAGE_TYPES, TOP_EVENTS_LIMIT, DEFAULT_SAMPLE_SIZE } from './constants.js';
@@ -98,6 +99,14 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
     if (path === '/tracker.js') {
       return {
         response: new Response(TRACKER_JS, {
+          headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=3600, s-maxage=604800', ...CORS_HEADERS },
+        }),
+      };
+    }
+
+    if (path === '/tracker.src.js') {
+      return {
+        response: new Response(TRACKER_SOURCE_JS, {
           headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=3600, s-maxage=604800', ...CORS_HEADERS },
         }),
       };
