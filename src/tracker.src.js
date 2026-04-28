@@ -105,6 +105,7 @@
   var TRACK_FORMS = script && script.getAttribute('data-track-forms') === 'true';
   var TRACK_404 = script && script.getAttribute('data-track-404') === 'true';
   var TRACK_SCROLL = script && script.getAttribute('data-track-scroll-depth') === 'true';
+  var TRACK_SPA = script && script.getAttribute('data-track-spa') === 'true';
 
   // --- Cross-subdomain identity ---
   var linkedDomains = null;
@@ -568,6 +569,9 @@
   })();
 
   // --- SPA route tracking ---
+  // SPA route automation is opt-in so sites keep explicit control over URL-derived
+  // page views and history monkey-patching. The initial page view and manual
+  // aa.page() calls remain available without enabling automatic route listeners.
   var lastPath = location.pathname + location.search + location.hash;
   var _flushTimeOnPage = null; // set by heartbeat if enabled
   var _resetErrorTracking = null; // set by error tracking if enabled
@@ -589,31 +593,33 @@
       if (_check404) _check404();
     }
   }
-  window.addEventListener('popstate', onRoute);
-  window.addEventListener('hashchange', onRoute);
-  // Monkey-patch pushState / replaceState
-  ['pushState', 'replaceState'].forEach(function(fn) {
-    var orig = history[fn];
-    history[fn] = function() {
-      var r = orig.apply(this, arguments);
-      onRoute();
-      return r;
-    };
-  });
+  if (TRACK_SPA) {
+    window.addEventListener('popstate', onRoute);
+    window.addEventListener('hashchange', onRoute);
+    // Monkey-patch pushState / replaceState only after explicit SPA opt-in.
+    ['pushState', 'replaceState'].forEach(function(fn) {
+      var orig = history[fn];
+      history[fn] = function() {
+        var r = orig.apply(this, arguments);
+        onRoute();
+        return r;
+      };
+    });
 
-  // --- bfcache support ---
-  window.addEventListener('pageshow', function(e) {
-    if (e.persisted) {
-      if (_flushTimeOnPage) _flushTimeOnPage();
-      if (_flushWebVitals) _flushWebVitals();
-      if (_flushScrollDepth) _flushScrollDepth();
-      lastPath = location.pathname + location.search + location.hash;
-      utm = getUtm();
-      aa.page();
-      if (_check404) _check404();
-      if (_scanImpressions) _scanImpressions();
-    }
-  });
+    // --- bfcache route support ---
+    window.addEventListener('pageshow', function(e) {
+      if (e.persisted) {
+        if (_flushTimeOnPage) _flushTimeOnPage();
+        if (_flushWebVitals) _flushWebVitals();
+        if (_flushScrollDepth) _flushScrollDepth();
+        lastPath = location.pathname + location.search + location.hash;
+        utm = getUtm();
+        aa.page();
+        if (_check404) _check404();
+        if (_scanImpressions) _scanImpressions();
+      }
+    });
+  }
 
   // --- Declarative event tracking ---
   document.addEventListener('click', function(e) {
