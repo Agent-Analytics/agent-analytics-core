@@ -495,7 +495,10 @@ describe('Tracker.js session support', () => {
     const { TRACKER_JS } = await import('../src/tracker.js');
     assert.ok(TRACKER_JS.includes('session_id'), 'tracker should reference session_id');
     assert.ok(TRACKER_JS.includes('sessionStorage'), 'tracker should use sessionStorage');
-    assert.ok(TRACKER_JS.includes('aa_sid'), 'tracker should use aa_sid key');
-    assert.ok(TRACKER_JS.includes('aa_last_activity'), 'tracker should track last activity');
+    assert.ok(TRACKER_JS.includes('aa:'), 'tracker should use scoped storage prefix');
+    assert.ok(TRACKER_JS.includes('sid'), 'tracker should use scoped sid key');
+    assert.ok(TRACKER_JS.includes('last_activity'), 'tracker should track scoped last activity');
+    assert.equal(TRACKER_JS.includes('aa_sid'), false, 'tracker should not use legacy aa_sid key');
+    assert.equal(TRACKER_JS.includes('aa_last_activity'), false, 'tracker should not use legacy aa_last_activity key');
   });
 });

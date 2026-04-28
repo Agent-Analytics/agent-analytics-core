@@ -5,6 +5,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const TEST_STORAGE_PREFIX = 'aa:test-scope:';
+function scopedKey(key) { return TEST_STORAGE_PREFIX + key; }
 
 /**
  * createConsentController — mirrors the consent management + queue/flush
@@ -14,7 +16,7 @@ function createConsentController(requireAtInit, storage) {
   storage = storage || {};
 
   var consentRequired = !!requireAtInit;
-  var consentGranted = consentRequired ? storage['aa_consent'] === 'granted' : false;
+  var consentGranted = consentRequired ? storage[scopedKey('consent')] === 'granted' : false;
 
   var queue = [];
   var flushed = [];
@@ -59,19 +61,19 @@ function createConsentController(requireAtInit, storage) {
 
     requireConsent: function() {
       consentRequired = true;
-      consentGranted = storage['aa_consent'] === 'granted';
+      consentGranted = storage[scopedKey('consent')] === 'granted';
     },
 
     grantConsent: function() {
       consentGranted = true;
-      storage['aa_consent'] = 'granted';
+      storage[scopedKey('consent')] = 'granted';
       queue.push({ event: '$consent', properties: { action: 'granted' } });
       flush();
     },
 
     revokeConsent: function() {
       consentGranted = false;
-      delete storage['aa_consent'];
+      delete storage[scopedKey('consent')];
       queue.length = 0;
     },
 
@@ -174,7 +176,7 @@ describe('grantConsent()', () => {
     const storage = {};
     const ctrl = createConsentController(true, storage);
     ctrl.grantConsent();
-    assert.equal(storage['aa_consent'], 'granted');
+    assert.equal(storage[scopedKey('consent')], 'granted');
   });
 
   test('subsequent events flush normally', () => {
@@ -203,7 +205,7 @@ describe('grantConsent()', () => {
     const storage = {};
     const ctrl = createConsentController(true, storage);
     ctrl.grantConsent();
-    assert.equal(storage['aa_consent'], 'granted');
+    assert.equal(storage[scopedKey('consent')], 'granted');
     assert.equal(ctrl.getFlushed().length, 1); // just $consent
     assert.equal(ctrl.getFlushed()[0].event, '$consent');
     assert.equal(ctrl.getFlushRequests()[0].endpoint, '/track');
@@ -241,11 +243,11 @@ describe('revokeConsent()', () => {
   });
 
   test('removes localStorage', () => {
-    const storage = { 'aa_consent': 'granted' };
+    const storage = { [scopedKey('consent')]: 'granted' };
     const ctrl = createConsentController(true, storage);
     ctrl.grantConsent();
     ctrl.revokeConsent();
-    assert.equal(storage['aa_consent'], undefined);
+    assert.equal(storage[scopedKey('consent')], undefined);
   });
 
   test('new events after revoke still buffer', () => {
@@ -303,7 +305,7 @@ describe('consent lifecycle cycles', () => {
 
 describe('prior consent from localStorage', () => {
   test('flush works immediately when prior consent exists', () => {
-    const storage = { 'aa_consent': 'granted' };
+    const storage = { [scopedKey('consent')]: 'granted' };
     const ctrl = createConsentController(true, storage);
     ctrl.track('page_view', {});
     ctrl.flush();
@@ -311,21 +313,21 @@ describe('prior consent from localStorage', () => {
   });
 
   test('scheduleFlush works with prior consent', () => {
-    const storage = { 'aa_consent': 'granted' };
+    const storage = { [scopedKey('consent')]: 'granted' };
     const ctrl = createConsentController(true, storage);
     ctrl.track('page_view', {});
     assert.equal(ctrl.getScheduleFlushCalls(), 1);
   });
 
   test('identify works with prior consent', () => {
-    const storage = { 'aa_consent': 'granted' };
+    const storage = { [scopedKey('consent')]: 'granted' };
     const ctrl = createConsentController(true, storage);
     ctrl.identify('user_123', 'anon_abc');
     assert.equal(ctrl.getIdentifySent().length, 1);
   });
 
   test('consentGranted is true on init with prior consent', () => {
-    const storage = { 'aa_consent': 'granted' };
+    const storage = { [scopedKey('consent')]: 'granted' };
     const ctrl = createConsentController(true, storage);
     assert.equal(ctrl.isConsentGranted(), true);
   });
@@ -348,7 +350,7 @@ describe('aa.requireConsent() programmatic', () => {
   });
 
   test('requireConsent checks localStorage for prior grant', () => {
-    const storage = { 'aa_consent': 'granted' };
+    const storage = { [scopedKey('consent')]: 'granted' };
     const ctrl = createConsentController(false, storage);
     ctrl.requireConsent();
     ctrl.track('page_view', {});
@@ -404,8 +406,10 @@ describe('consent management in built tracker', () => {
     assert.ok(content.includes('revokeConsent'), 'tracker.js should contain revokeConsent');
   });
 
-  test('built tracker.js contains aa_consent localStorage key', () => {
-    assert.ok(content.includes('aa_consent'), 'tracker.js should contain aa_consent');
+  test('built tracker.js contains scoped consent storage key', () => {
+    assert.ok(content.includes('aa:'), 'tracker.js should contain scoped storage prefix');
+    assert.ok(content.includes('consent'), 'tracker.js should contain consent key');
+    assert.equal(content.includes('aa_consent'), false, 'tracker.js should not contain legacy aa_consent key');
   });
 
   test('built tracker.js contains data-require-consent attribute', () => {

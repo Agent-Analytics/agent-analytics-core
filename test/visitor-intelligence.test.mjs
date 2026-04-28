@@ -5,6 +5,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const TEST_STORAGE_PREFIX = 'aa:test-scope:';
+function scopedKey(key) { return TEST_STORAGE_PREFIX + key; }
 
 /**
  * createVisitorIntelligenceController — mirrors the session count + days since
@@ -16,27 +18,27 @@ function createVisitorIntelligenceController(localStorage, sessionStorage) {
 
   var SESSION_TIMEOUT = 30 * 60 * 1000;
 
-  var sessionCount = parseInt(localStorage['aa_sc'] || '0', 10);
-  var firstVisit = parseInt(localStorage['aa_fv'] || '0', 10);
+  var sessionCount = parseInt(localStorage[scopedKey('sc')] || '0', 10);
+  var firstVisit = parseInt(localStorage[scopedKey('fv')] || '0', 10);
   var _now = Date.now();
 
   if (!firstVisit) {
     firstVisit = _now;
-    localStorage['aa_fv'] = String(firstVisit);
+    localStorage[scopedKey('fv')] = String(firstVisit);
   }
 
   function getSessionId(now) {
     if (now !== undefined) _now = now;
-    var lastActivity = parseInt(sessionStorage['aa_last_activity'] || '0', 10);
-    var sid = sessionStorage['aa_sid'];
+    var lastActivity = parseInt(sessionStorage[scopedKey('last_activity')] || '0', 10);
+    var sid = sessionStorage[scopedKey('sid')];
     if (!sid || (lastActivity && (_now - lastActivity) > SESSION_TIMEOUT)) {
       sid = 'sess_' + Math.random().toString(36).slice(2, 11) + _now.toString(36);
-      sessionStorage['aa_sid'] = sid;
+      sessionStorage[scopedKey('sid')] = sid;
       // Increment session count on new session
       sessionCount++;
-      localStorage['aa_sc'] = String(sessionCount);
+      localStorage[scopedKey('sc')] = String(sessionCount);
     }
-    sessionStorage['aa_last_activity'] = String(_now);
+    sessionStorage[scopedKey('last_activity')] = String(_now);
     return sid;
   }
 
@@ -122,7 +124,7 @@ describe('session count', () => {
       const ctrl = createVisitorIntelligenceController(ls, ss);
       ctrl.getSessionId(now + i * 60 * 60 * 1000); // 1 hour apart
     }
-    assert.equal(parseInt(ls['aa_sc'], 10), 10);
+    assert.equal(parseInt(ls[scopedKey('sc')], 10), 10);
   });
 });
 
@@ -148,7 +150,7 @@ describe('days since first visit', () => {
 
   test('1 day later = 1', () => {
     const now = Date.now();
-    const ls = { 'aa_fv': String(now) };
+    const ls = { [scopedKey('fv')]: String(now) };
     const ss = {};
     const ctrl = createVisitorIntelligenceController(ls, ss);
     assert.equal(ctrl.getDaysSinceFirstVisit(now + 86400000), 1);
@@ -156,7 +158,7 @@ describe('days since first visit', () => {
 
   test('7 days later = 7', () => {
     const now = Date.now();
-    const ls = { 'aa_fv': String(now) };
+    const ls = { [scopedKey('fv')]: String(now) };
     const ss = {};
     const ctrl = createVisitorIntelligenceController(ls, ss);
     assert.equal(ctrl.getDaysSinceFirstVisit(now + 7 * 86400000), 7);
@@ -170,19 +172,19 @@ describe('days since first visit', () => {
     // First visit
     const ctrl1 = createVisitorIntelligenceController(ls, ss);
     ctrl1.getSessionId(now);
-    const firstVisit = parseInt(ls['aa_fv'], 10);
+    const firstVisit = parseInt(ls[scopedKey('fv')], 10);
 
     // Second visit — 1 day later, new sessionStorage
     const ss2 = {};
     const ctrl2 = createVisitorIntelligenceController(ls, ss2);
     ctrl2.getSessionId(now + 86400000);
-    assert.equal(parseInt(ls['aa_fv'], 10), firstVisit);
+    assert.equal(parseInt(ls[scopedKey('fv')], 10), firstVisit);
 
     // Third visit — 30 days later
     const ss3 = {};
     const ctrl3 = createVisitorIntelligenceController(ls, ss3);
     ctrl3.getSessionId(now + 30 * 86400000);
-    assert.equal(parseInt(ls['aa_fv'], 10), firstVisit);
+    assert.equal(parseInt(ls[scopedKey('fv')], 10), firstVisit);
   });
 });
 
@@ -200,7 +202,7 @@ describe('baseProps merge — visitor intelligence', () => {
 
   test('days_since_first_visit appears in built props', () => {
     const now = Date.now();
-    const ls = { 'aa_fv': String(now - 3 * 86400000) }; // 3 days ago
+    const ls = { [scopedKey('fv')]: String(now - 3 * 86400000) }; // 3 days ago
     const ss = {};
     const ctrl = createVisitorIntelligenceController(ls, ss);
     ctrl.getSessionId(now);
@@ -231,12 +233,16 @@ describe('baseProps merge — visitor intelligence', () => {
 describe('visitor intelligence in built tracker', () => {
   const content = readFileSync(join(__dirname, '..', 'src', 'tracker.js'), 'utf-8');
 
-  test('tracker.js contains aa_sc', () => {
-    assert.ok(content.includes('aa_sc'), 'tracker.js should contain aa_sc');
+  test('tracker.js contains scoped session count key', () => {
+    assert.ok(content.includes('aa:'), 'tracker.js should contain scoped storage prefix');
+    assert.ok(content.includes('sc'), 'tracker.js should contain session count key');
+    assert.equal(content.includes('aa_sc'), false, 'tracker.js should not contain legacy aa_sc key');
   });
 
-  test('tracker.js contains aa_fv', () => {
-    assert.ok(content.includes('aa_fv'), 'tracker.js should contain aa_fv');
+  test('tracker.js contains scoped first visit key', () => {
+    assert.ok(content.includes('aa:'), 'tracker.js should contain scoped storage prefix');
+    assert.ok(content.includes('fv'), 'tracker.js should contain first visit key');
+    assert.equal(content.includes('aa_fv'), false, 'tracker.js should not contain legacy aa_fv key');
   });
 
   test('tracker.js contains session_count', () => {

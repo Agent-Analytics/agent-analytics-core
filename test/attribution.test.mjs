@@ -5,6 +5,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const TEST_STORAGE_PREFIX = 'aa:test-scope:';
+function scopedKey(key) { return TEST_STORAGE_PREFIX + key; }
 
 /**
  * createAttributionController — mirrors the UTM persistence + first-touch
@@ -25,14 +27,14 @@ function createAttributionController(localStorage, sessionStorage) {
     }
     // Persist new UTMs to sessionStorage (last-touch for this session)
     if (hasNew) {
-      sessionStorage['aa_utm'] = JSON.stringify(u);
+      sessionStorage[scopedKey('utm')] = JSON.stringify(u);
     } else {
       // No UTMs on URL — restore from session
-      try { u = JSON.parse(sessionStorage['aa_utm'] || '{}'); } catch (_) { u = {}; }
+      try { u = JSON.parse(sessionStorage[scopedKey('utm')] || '{}'); } catch (_) { u = {}; }
     }
     // First-touch: store once, never overwrite
-    if (hasNew && !localStorage['aa_ft']) {
-      localStorage['aa_ft'] = JSON.stringify(u);
+    if (hasNew && !localStorage[scopedKey('ft')]) {
+      localStorage[scopedKey('ft')] = JSON.stringify(u);
     }
     return u;
   }
@@ -44,7 +46,7 @@ function createAttributionController(localStorage, sessionStorage) {
     for (var k in utm) { if (utm.hasOwnProperty(k)) p[k] = utm[k]; }
     // Merge first-touch attribution
     try {
-      var ft = JSON.parse(localStorage['aa_ft'] || '{}');
+      var ft = JSON.parse(localStorage[scopedKey('ft')] || '{}');
       for (var kf in ft) { if (ft.hasOwnProperty(kf)) p['first_' + kf] = ft[kf]; }
     } catch (_) {}
     return p;
@@ -117,7 +119,7 @@ describe('first-touch attribution', () => {
     const ss = {};
     const ctrl = createAttributionController(ls, ss);
     ctrl.getUtm({ utm_source: 'google', utm_medium: 'cpc' });
-    const ft = JSON.parse(ls['aa_ft']);
+    const ft = JSON.parse(ls[scopedKey('ft')]);
     assert.equal(ft.utm_source, 'google');
     assert.equal(ft.utm_medium, 'cpc');
   });
@@ -133,7 +135,7 @@ describe('first-touch attribution', () => {
     const ctrl2 = createAttributionController(ls, ss2);
     ctrl2.getUtm({ utm_source: 'facebook' });
 
-    const ft = JSON.parse(ls['aa_ft']);
+    const ft = JSON.parse(ls[scopedKey('ft')]);
     assert.equal(ft.utm_source, 'google'); // original preserved
   });
 
@@ -148,7 +150,7 @@ describe('first-touch attribution', () => {
     const ctrl2 = createAttributionController(ls, {});
     ctrl2.getUtm({});
 
-    const ft = JSON.parse(ls['aa_ft']);
+    const ft = JSON.parse(ls[scopedKey('ft')]);
     assert.equal(ft.utm_source, 'google');
     assert.equal(ft.utm_campaign, 'launch');
   });
@@ -157,7 +159,7 @@ describe('first-touch attribution', () => {
     const ls = {};
     const ctrl = createAttributionController(ls, {});
     ctrl.getUtm({});
-    assert.equal(ls['aa_ft'], undefined);
+    assert.equal(ls[scopedKey('ft')], undefined);
   });
 
   test('first-touch stored on first visit with UTMs, even if later visits have none', () => {
@@ -175,7 +177,7 @@ describe('first-touch attribution', () => {
     const ctrl3 = createAttributionController(ls, {});
     ctrl3.getUtm({});
 
-    const ft = JSON.parse(ls['aa_ft']);
+    const ft = JSON.parse(ls[scopedKey('ft')]);
     assert.equal(ft.utm_source, 'newsletter');
   });
 });
@@ -236,12 +238,16 @@ describe('baseProps merge — attribution', () => {
 describe('attribution in built tracker', () => {
   const content = readFileSync(join(__dirname, '..', 'src', 'tracker.js'), 'utf-8');
 
-  test('tracker.js contains aa_utm', () => {
-    assert.ok(content.includes('aa_utm'), 'tracker.js should contain aa_utm');
+  test('tracker.js contains scoped utm key', () => {
+    assert.ok(content.includes('aa:'), 'tracker.js should contain scoped storage prefix');
+    assert.ok(content.includes('utm'), 'tracker.js should contain utm storage key');
+    assert.equal(content.includes('aa_utm'), false, 'tracker.js should not contain legacy aa_utm key');
   });
 
-  test('tracker.js contains aa_ft', () => {
-    assert.ok(content.includes('aa_ft'), 'tracker.js should contain aa_ft');
+  test('tracker.js contains scoped first-touch key', () => {
+    assert.ok(content.includes('aa:'), 'tracker.js should contain scoped storage prefix');
+    assert.ok(content.includes('ft'), 'tracker.js should contain first-touch storage key');
+    assert.equal(content.includes('aa_ft'), false, 'tracker.js should not contain legacy aa_ft key');
   });
 
   test('tracker.js contains first_', () => {

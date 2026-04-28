@@ -23,12 +23,72 @@
   var PROJECT = (script && script.dataset.project) || 'default';
   var TOKEN = (script && script.dataset.token) || null;
 
+  function storageScope() {
+    var raw = TOKEN || PROJECT || 'default';
+    raw = String(raw || 'default');
+    try {
+      return encodeURIComponent(raw).replace(/[!'()*]/g, function(ch) {
+        return '%' + ch.charCodeAt(0).toString(16).toUpperCase();
+      }) || 'default';
+    } catch(_) {
+      var out = '';
+      for (var i = 0; i < raw.length; i++) {
+        var c = raw.charAt(i);
+        out += /[a-zA-Z0-9._-]/.test(c) ? c : '%' + raw.charCodeAt(i).toString(16).toUpperCase();
+      }
+      return out || 'default';
+    }
+  }
+
+  var STORAGE_PREFIX = 'aa:' + storageScope() + ':';
+
+  function createSafeStorage(name) {
+    var nativeStorage = null;
+    var memory = {};
+    var removed = {};
+    try { nativeStorage = window[name]; } catch(_) { nativeStorage = null; }
+    function scoped(key) { return STORAGE_PREFIX + key; }
+    return {
+      getItem: function(key) {
+        var sk = scoped(key);
+        if (Object.prototype.hasOwnProperty.call(removed, sk)) return null;
+        if (Object.prototype.hasOwnProperty.call(memory, sk)) return memory[sk];
+        try {
+          if (nativeStorage && typeof nativeStorage.getItem === 'function') {
+            var value = nativeStorage.getItem(sk);
+            if (value !== null && value !== undefined) return value;
+          }
+        } catch(_) {}
+        return null;
+      },
+      setItem: function(key, value) {
+        var sk = scoped(key);
+        delete removed[sk];
+        memory[sk] = String(value);
+        try {
+          if (nativeStorage && typeof nativeStorage.setItem === 'function') nativeStorage.setItem(sk, String(value));
+        } catch(_) {}
+      },
+      removeItem: function(key) {
+        var sk = scoped(key);
+        delete memory[sk];
+        removed[sk] = true;
+        try {
+          if (nativeStorage && typeof nativeStorage.removeItem === 'function') nativeStorage.removeItem(sk);
+        } catch(_) {}
+      }
+    };
+  }
+
   // --- DNT respect (opt-in) ---
   var RESPECT_DNT = script && script.getAttribute('data-do-not-track') === 'true';
   if (RESPECT_DNT && navigator.doNotTrack === '1') return;
 
+  var localStore = createSafeStorage('localStorage');
+  var sessionStore = createSafeStorage('sessionStorage');
+
   // --- Client-side disable flag ---
-  if (localStorage.getItem('aa_disabled') === 'true') return;
+  if (localStore.getItem('disabled') === 'true') return;
 
   // --- Skip prerendered pages (Chrome Speculation Rules, <link rel="prerender">) ---
   if (document.visibilityState === 'prerender') return;
@@ -77,16 +137,16 @@
 
   // --- Anon ID ---
   function getAnonId() {
-    var id = localStorage.getItem('aa_uid');
+    var id = localStore.getItem('uid');
     if (!id) {
       id = 'anon_' + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
-      localStorage.setItem('aa_uid', id);
+      localStore.setItem('uid', id);
     }
     return id;
   }
   var linkedAnonId = adoptCrossSubdomainId();
   var anonId = getAnonId();
-  var identifiedUserId = localStorage.getItem('aa_identified_uid') || null;
+  var identifiedUserId = localStore.getItem('identified_uid') || null;
   function currentUserId() {
     return identifiedUserId || anonId;
   }
@@ -110,24 +170,24 @@
   var SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
   // --- Visitor intelligence ---
-  var sessionCount = parseInt(localStorage.getItem('aa_sc') || '0', 10);
-  var firstVisit = parseInt(localStorage.getItem('aa_fv') || '0', 10);
+  var sessionCount = parseInt(localStore.getItem('sc') || '0', 10);
+  var firstVisit = parseInt(localStore.getItem('fv') || '0', 10);
   if (!firstVisit) {
     firstVisit = Date.now();
-    localStorage.setItem('aa_fv', String(firstVisit));
+    localStore.setItem('fv', String(firstVisit));
   }
 
   function getSessionId() {
     var now = Date.now();
-    var lastActivity = parseInt(sessionStorage.getItem('aa_last_activity') || '0', 10);
-    var sid = sessionStorage.getItem('aa_sid');
+    var lastActivity = parseInt(sessionStore.getItem('last_activity') || '0', 10);
+    var sid = sessionStore.getItem('sid');
     if (!sid || (lastActivity && (now - lastActivity) > SESSION_TIMEOUT)) {
       sid = 'sess_' + Math.random().toString(36).slice(2, 11) + now.toString(36);
-      sessionStorage.setItem('aa_sid', sid);
+      sessionStore.setItem('sid', sid);
       sessionCount++;
-      localStorage.setItem('aa_sc', String(sessionCount));
+      localStore.setItem('sc', String(sessionCount));
     }
-    sessionStorage.setItem('aa_last_activity', String(now));
+    sessionStore.setItem('last_activity', String(now));
     return sid;
   }
 
@@ -141,12 +201,12 @@
       if (v) { u[keys[i]] = v; hasNew = true; }
     }
     if (hasNew) {
-      sessionStorage.setItem('aa_utm', JSON.stringify(u));
+      sessionStore.setItem('utm', JSON.stringify(u));
     } else {
-      try { u = JSON.parse(sessionStorage.getItem('aa_utm') || '{}'); } catch(_) { u = {}; }
+      try { u = JSON.parse(sessionStore.getItem('utm') || '{}'); } catch(_) { u = {}; }
     }
-    if (hasNew && !localStorage.getItem('aa_ft')) {
-      localStorage.setItem('aa_ft', JSON.stringify(u));
+    if (hasNew && !localStore.getItem('ft')) {
+      localStore.setItem('ft', JSON.stringify(u));
     }
     return u;
   }
@@ -223,7 +283,7 @@
 
   // --- Consent management ---
   var consentRequired = REQUIRE_CONSENT;
-  var consentGranted = REQUIRE_CONSENT ? localStorage.getItem('aa_consent') === 'granted' : false;
+  var consentGranted = REQUIRE_CONSENT ? localStore.getItem('consent') === 'granted' : false;
 
   // --- Event queue ---
   var queue = [];
@@ -352,7 +412,7 @@
     for (var k in utm) { if (utm.hasOwnProperty(k)) p[k] = utm[k]; }
     // Merge first-touch attribution
     try {
-      var ft = JSON.parse(localStorage.getItem('aa_ft') || '{}');
+      var ft = JSON.parse(localStore.getItem('ft') || '{}');
       for (var kf in ft) { if (ft.hasOwnProperty(kf)) p['first_' + kf] = ft[kf]; }
     } catch(_) {}
     // Merge global sticky props
@@ -386,7 +446,7 @@
       if (!id) return;
       var previousId = currentUserId();
       identifiedUserId = id;
-      localStorage.setItem('aa_identified_uid', id);
+      localStore.setItem('identified_uid', id);
       flush();
       sendIdentify(previousId, id, traits || {});
     },
@@ -459,19 +519,19 @@
 
     requireConsent: function() {
       consentRequired = true;
-      consentGranted = localStorage.getItem('aa_consent') === 'granted';
+      consentGranted = localStore.getItem('consent') === 'granted';
     },
 
     grantConsent: function() {
       consentGranted = true;
-      localStorage.setItem('aa_consent', 'granted');
+      localStore.setItem('consent', 'granted');
       aa.track('$consent', { action: 'granted' });
       flush();
     },
 
     revokeConsent: function() {
       consentGranted = false;
-      localStorage.removeItem('aa_consent');
+      localStore.removeItem('consent');
       queue.length = 0;
     }
   };
