@@ -96,7 +96,7 @@ export default {
 <script defer src="https://your-server.com/tracker.js" data-project="my-site" data-token="YOUR_TOKEN"></script>
 ```
 
-Tracks the initial page view by default, with sanitized URL/referrer, screen size, browser, OS, device type, and standard UTM params. SPA route-change tracking is explicit opt-in: add `data-track-spa="true"` to listen for URL changes via patched `pushState`/`replaceState`, `popstate`, and `hashchange`. Events are batched and flushed every 5s, or immediately on page hide via `sendBeacon`.
+Tracks the initial page view by default, with sanitized URL/referrer, screen size, browser, OS, device type, and allowlisted UTM params. SPA route-change tracking is explicit opt-in: add `data-track-spa="true"` to listen for URL changes via patched `pushState`/`replaceState`, `popstate`, and `hashchange`. Events are batched and flushed every 5s, or immediately on page hide via `sendBeacon`.
 
 On `localhost` and `127.0.0.1`, the tracker skips all network requests and logs events to the browser console instead (prefixed `[aa-dev]`), so development traffic never pollutes production data.
 
@@ -124,6 +124,7 @@ When clicked, this fires a `cta_click` event with `{ id: "hero_signup" }`. Add p
 | `data-token` | Project token `aat_*` (required) |
 | `data-link-domains` | Enable cross-subdomain identity linking |
 | `data-do-not-track` | Set to `"true"` to honor the browser's DNT signal |
+| `data-track-spa` | Set to `"true"` to track SPA route changes |
 
 Set `localStorage.setItem('aa_disabled', 'true')` to disable tracking entirely (useful for internal teams or opt-out flows).
 
