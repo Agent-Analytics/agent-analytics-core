@@ -1,10 +1,36 @@
 # @agent-analytics/core
 
+[![npm version](https://img.shields.io/npm/v/@agent-analytics/core?label=npm)](https://www.npmjs.com/package/@agent-analytics/core)
+[![CI](https://github.com/Agent-Analytics/agent-analytics-core/actions/workflows/ci.yml/badge.svg)](https://github.com/Agent-Analytics/agent-analytics-core/actions/workflows/ci.yml)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Privacy: default-minimal](https://img.shields.io/badge/privacy-default--minimal-2ea44f)
+![Trust: readable tracker](https://img.shields.io/badge/trust-readable--tracker-6f42c1)
+
 Analytics engine with zero dependencies. Bring your own database and auth, get a full analytics API that runs anywhere (Workers, Node, Deno, Bun).
 
 ```bash
 npm install @agent-analytics/core
 ```
+
+## Audited tracker surface
+
+The browser tracker is a first-class audited artifact in this package, not a black-box snippet. You can inspect both the source that ships in npm and the hosted readable endpoint used by Agent Analytics Cloud:
+
+- Readable source in this repository: [`src/tracker.src.js`](./src/tracker.src.js)
+- Generated readable module exported by the package: [`src/tracker-source.js`](./src/tracker-source.js)
+- Hosted readable endpoint: [`https://api.agentanalytics.sh/tracker.src.js`](https://api.agentanalytics.sh/tracker.src.js)
+- Minified runtime endpoint: [`https://api.agentanalytics.sh/tracker.js`](https://api.agentanalytics.sh/tracker.js)
+
+Default privacy contract:
+
+- The tracker does not dynamically load third-party scripts, call `eval`/`new Function`, use `document.write`, collect form values, or do hard browser fingerprinting.
+- Automatic `url` and `referrer` fields are sanitized to origin plus pathname; query strings are not stored except the standard UTM keys (`utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`).
+- Anonymous and session identifiers are scoped to the project token or project name; legacy unscoped storage keys are not migrated into the scoped identity.
+- Local development on `localhost` and `127.0.0.1` logs to the console instead of sending network requests.
+- Higher-sensitivity automatic capture is opt-in: generic clicks, forms, downloads, errors, web vitals, performance timing, scroll depth, outgoing links, and SPA route listeners are disabled unless configured.
+- `aa.identify(userId, { email })` is explicit-only. Use a stable app/account id for `userId`; email is only for server-side project-scoped HMAC lookup and is stripped from event rows/profile traits by default.
+
+Tracker behavior is covered by unit tests, including privacy guardrails in [`test/tracker-privacy-guardrails.test.mjs`](./test/tracker-privacy-guardrails.test.mjs), URL sanitization in [`test/tracker-url-sanitization.test.mjs`](./test/tracker-url-sanitization.test.mjs), scoped storage/identity tests in [`test/storage-scoping.test.mjs`](./test/storage-scoping.test.mjs) and [`test/tracker-identity.test.mjs`](./test/tracker-identity.test.mjs), and route coverage for `/tracker.js` plus `/tracker.src.js` in [`test/handler-routes.test.mjs`](./test/handler-routes.test.mjs).
 
 ## How it works
 
@@ -70,7 +96,7 @@ export default {
 <script defer src="https://your-server.com/tracker.js" data-project="my-site" data-token="YOUR_TOKEN"></script>
 ```
 
-Auto-tracks page views (including SPA navigations via patched `pushState`/`replaceState`), with URL, referrer, screen size, browser, OS, device type, and UTM params. Events are batched and flushed every 5s, or immediately on page hide via `sendBeacon`.
+Auto-tracks page views, with sanitized URL/referrer, screen size, browser, OS, device type, and standard UTM params. Events are batched and flushed every 5s, or immediately on page hide via `sendBeacon`. SPA route listeners are opt-in instead of enabled by default.
 
 On `localhost` and `127.0.0.1`, the tracker skips all network requests and logs events to the browser console instead (prefixed `[aa-dev]`), so development traffic never pollutes production data.
 
@@ -128,7 +154,10 @@ curl "https://your-server.com/projects" -H "X-API-Key: KEY"
 - `GET /events?project=X` — raw event log. Optional: `event`, `session_id`, `since`, `limit`
 - `GET /projects` — all projects derived from events data
 
-**Utility:** `GET /health`, `GET /tracker.js`
+**Utility:** `GET /health`, `GET /tracker.js`, `GET /tracker.src.js`
+
+- `GET /tracker.js` — minified browser tracker with a source/privacy header.
+- `GET /tracker.src.js` — readable, unminified tracker source served as `application/javascript` for auditability.
 
 ## Writing a database adapter
 
