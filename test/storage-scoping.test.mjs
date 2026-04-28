@@ -271,7 +271,9 @@ describe('project-scoped safe browser storage', () => {
 
     assert.equal(storageAccessCounter.localStorage, 0);
     assert.equal(storageAccessCounter.sessionStorage, 0);
-    assert.equal(env.context.window.aa, undefined);
+    assert.ok(env.context.window.aa);
+    assert.doesNotThrow(() => env.context.window.aa.track('dnt_noop'));
+    assert.equal(env.context.window.aa.experiment('dnt_experiment'), null);
     assert.deepEqual(env.sends, []);
   });
 

@@ -2,9 +2,49 @@
 export const TRACKER_SOURCE_JS = `(function() {
   'use strict';
 
+  function createNoopApi() {
+    return {
+      track: function() {},
+      identify: function() {},
+      page: function() {},
+      experiment: function() { return null; },
+      set: function() {},
+      requireConsent: function() {},
+      grantConsent: function() {},
+      revokeConsent: function() {}
+    };
+  }
+
+  function safeCall(fn, fallback) {
+    return function() {
+      try { return fn.apply(this, arguments); } catch { return fallback; }
+    };
+  }
+
+  function wrapApi(api) {
+    return {
+      track: safeCall(api.track, undefined),
+      identify: safeCall(api.identify, undefined),
+      page: safeCall(api.page, undefined),
+      experiment: safeCall(api.experiment, null),
+      set: safeCall(api.set, undefined),
+      requireConsent: safeCall(api.requireConsent, undefined),
+      grantConsent: safeCall(api.grantConsent, undefined),
+      revokeConsent: safeCall(api.revokeConsent, undefined)
+    };
+  }
+
+  try {
+    if (!window.aa) window.aa = createNoopApi();
+    if (window.__aaTrackerRuntimeLoaded) return;
+    window.__aaTrackerRuntimeLoaded = true;
+  } catch { /* fail-safe stub assignment only */ }
+
+  try {
+
   // Skip real tracking on localhost — log to console instead
   if (/^localhost$|^127(\\.\\d+){3}$/.test(location.hostname)) {
-    window.aa = {
+    window.aa = wrapApi({
       track: function(e, p) { console.log('[aa-dev] track', e, p || {}); },
       identify: function(id) { console.log('[aa-dev] identify', id); },
       page: function(n) { console.log('[aa-dev] page', n || document.title); },
@@ -13,11 +53,9 @@ export const TRACKER_SOURCE_JS = `(function() {
       requireConsent: function() { console.log('[aa-dev] requireConsent'); },
       grantConsent: function() { console.log('[aa-dev] grantConsent'); },
       revokeConsent: function() { console.log('[aa-dev] revokeConsent'); }
-    };
+    });
     return;
   }
-
-  if (window.aa && window.aa.__agentAnalyticsLoaded) return;
 
   var script = document.currentScript;
   var ENDPOINT = script && script.src
@@ -294,17 +332,40 @@ export const TRACKER_SOURCE_JS = `(function() {
   var flushTimer = null;
   var FLUSH_INTERVAL = 5000;
   var MAX_BATCH_EVENTS = 100;
+  var MAX_STRING_LENGTH = 4096;
+  var MAX_OBJECT_KEYS = 100;
+  var MAX_ARRAY_ITEMS = 50;
+  var MAX_SANITIZE_DEPTH = 8;
+  var MAX_PAYLOAD_BYTES = 64 * 1024;
 
   function send(url, data) {
-    if (navigator.sendBeacon) {
-      if (navigator.sendBeacon(url, new Blob([data], {type: 'text/plain'}))) return;
-    }
-    fetch(url, {
-      method: 'POST',
-      body: data,
-      keepalive: true,
-      credentials: 'omit'
-    }).catch(function() {});
+    try {
+      if (typeof data === 'string' && data.length > MAX_PAYLOAD_BYTES) return;
+      if (navigator.sendBeacon) {
+        try {
+          if (navigator.sendBeacon(url, new Blob([data], {type: 'text/plain'}))) return;
+        } catch { /* ignore beacon failures */ }
+      }
+      if (typeof fetch === 'function') {
+        try {
+          var req = fetch(url, {
+            method: 'POST',
+            body: data,
+            keepalive: true,
+            credentials: 'omit'
+          });
+          if (req && typeof req.catch === 'function') req.catch(function() {});
+        } catch { /* ignore fetch failures */ }
+      }
+    } catch { /* ignore send failures */ }
+  }
+
+  function safeStringify(value) {
+    try {
+      var data = JSON.stringify(value);
+      if (data && data.length <= MAX_PAYLOAD_BYTES) return data;
+    } catch { /* ignore serialization failures */ }
+    return null;
   }
 
   function normalizeEmail(email) {
@@ -315,34 +376,44 @@ export const TRACKER_SOURCE_JS = `(function() {
     return typeof key === 'string' && key.toLowerCase().indexOf('email') !== -1;
   }
 
-  function sanitizeValue(value) {
-    if (typeof value === 'string' && value.length > 4096) return value.slice(0, 4096);
-    return value;
-  }
-
-  function sanitizeProps(props) {
-    if (Array.isArray(props)) {
+  function sanitizeValue(value, seen, depth) {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    var type = typeof value;
+    if (type === 'string') return value.length > MAX_STRING_LENGTH ? value.slice(0, MAX_STRING_LENGTH) : value;
+    if (type === 'number' || type === 'boolean') return value;
+    if (type === 'function' || type === 'symbol' || type === 'bigint') return undefined;
+    if (type !== 'object') return value;
+    if (seen.indexOf(value) !== -1) return '[Circular]';
+    if (depth >= MAX_SANITIZE_DEPTH) return '[MaxDepth]';
+    seen.push(value);
+    if (Array.isArray(value)) {
       var cleanArray = [];
-      for (var ai = 0; ai < props.length; ai++) {
-        var item = props[ai];
-        if (item && typeof item === 'object') cleanArray.push(sanitizeProps(item));
-        else if (item !== undefined) cleanArray.push(sanitizeValue(item));
+      for (var ai = 0; ai < value.length && ai < MAX_ARRAY_ITEMS; ai++) {
+        var item = sanitizeValue(value[ai], seen, depth + 1);
+        if (item !== undefined) cleanArray.push(item);
       }
+      seen.pop();
       return cleanArray;
     }
     var clean = {};
-    if (!props || typeof props !== 'object') return clean;
-    for (var key in props) {
-      if (!props.hasOwnProperty(key)) continue;
+    var keyCount = 0;
+    for (var key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
       if (isReservedEmailKey(key)) continue;
-      if (props[key] === undefined) continue;
-      if (props[key] && typeof props[key] === 'object') {
-        clean[key] = sanitizeProps(props[key]);
-      } else {
-        clean[key] = sanitizeValue(props[key]);
-      }
+      if (keyCount >= MAX_OBJECT_KEYS) break;
+      var sanitized = sanitizeValue(value[key], seen, depth + 1);
+      if (sanitized === undefined) continue;
+      clean[key] = sanitized;
+      keyCount++;
     }
+    seen.pop();
     return clean;
+  }
+
+  function sanitizeProps(props) {
+    if (!props || typeof props !== 'object') return {};
+    try { return sanitizeValue(props, [], 0) || {}; } catch { return {}; }
   }
 
   function sanitizeIdentifyTraits(traits) {
@@ -363,7 +434,8 @@ export const TRACKER_SOURCE_JS = `(function() {
     };
     if (Object.keys(cleanTraits).length > 0) payload.traits = cleanTraits;
     if (payload.traits || previousId !== nextId) {
-      send(ENDPOINT.replace('/track', '/identify'), JSON.stringify(payload));
+      var identifyData = safeStringify(payload);
+      if (identifyData) send(ENDPOINT.replace('/track', '/identify'), identifyData);
     }
   }
 
@@ -377,9 +449,11 @@ export const TRACKER_SOURCE_JS = `(function() {
     while (batch.length) {
       var chunk = batch.splice(0, MAX_BATCH_EVENTS);
       if (chunk.length === 1) {
-        send(ENDPOINT, JSON.stringify(chunk[0]));
+        var eventData = safeStringify(chunk[0]);
+        if (eventData) send(ENDPOINT, eventData);
       } else {
-        send(ENDPOINT.replace('/track', '/track/batch'), JSON.stringify({ events: chunk }));
+        var batchData = safeStringify({ events: chunk });
+        if (batchData) send(ENDPOINT.replace('/track', '/track/batch'), batchData);
       }
     }
   }
@@ -565,15 +639,24 @@ export const TRACKER_SOURCE_JS = `(function() {
   (function loadExperimentConfig() {
     if (!TOKEN) { applyDeclarativeExperiments(); return; }
     var configUrl = ENDPOINT.replace('/track', '/experiments/config') + '?token=' + TOKEN;
-    fetch(configUrl, { credentials: 'omit' })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        experimentConfig = data.experiments || [];
+    try {
+      var configReq = fetch(configUrl, { credentials: 'omit' });
+      if (configReq && typeof configReq.then === 'function') {
+        configReq
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            experimentConfig = data.experiments || [];
+            applyDeclarativeExperiments();
+          })
+          .catch(function() {
+            applyDeclarativeExperiments();
+          });
+      } else {
         applyDeclarativeExperiments();
-      })
-      .catch(function() {
-        applyDeclarativeExperiments();
-      });
+      }
+    } catch {
+      applyDeclarativeExperiments();
+    }
   })();
 
   // --- SPA route tracking ---
@@ -1008,10 +1091,10 @@ export const TRACKER_SOURCE_JS = `(function() {
     }
   }
 
-  aa.__agentAnalyticsLoaded = true;
-  window.aa = aa;
-
   // Auto track initial page view
   aa.page();
+
+  window.aa = wrapApi(aa);
+} catch { /* keep no-op window.aa when initialization fails */ }
 })();
 `;
