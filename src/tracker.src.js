@@ -16,6 +16,8 @@
     return;
   }
 
+  if (window.aa && window.aa.__agentAnalyticsLoaded) return;
+
   var script = document.currentScript;
   var ENDPOINT = script && script.src
     ? new URL(script.src).origin + '/track'
@@ -312,13 +314,18 @@
     return typeof key === 'string' && key.toLowerCase().indexOf('email') !== -1;
   }
 
+  function sanitizeValue(value) {
+    if (typeof value === 'string' && value.length > 4096) return value.slice(0, 4096);
+    return value;
+  }
+
   function sanitizeProps(props) {
     if (Array.isArray(props)) {
       var cleanArray = [];
       for (var ai = 0; ai < props.length; ai++) {
         var item = props[ai];
         if (item && typeof item === 'object') cleanArray.push(sanitizeProps(item));
-        else if (item !== undefined) cleanArray.push(item);
+        else if (item !== undefined) cleanArray.push(sanitizeValue(item));
       }
       return cleanArray;
     }
@@ -331,7 +338,7 @@
       if (props[key] && typeof props[key] === 'object') {
         clean[key] = sanitizeProps(props[key]);
       } else {
-        clean[key] = props[key];
+        clean[key] = sanitizeValue(props[key]);
       }
     }
     return clean;
@@ -1001,8 +1008,9 @@
     }
   }
 
+  aa.__agentAnalyticsLoaded = true;
+  window.aa = aa;
+
   // Auto track initial page view
   aa.page();
-
-  window.aa = aa;
 })();
