@@ -97,6 +97,19 @@ function parseSend(sends, path, predicate = () => true) {
 }
 
 describe('browser tracker identity cleanup', () => {
+  test('getIdentity exposes the random anonymous id without traits or storage internals', () => {
+    const { context } = createTrackerContext({
+      localStorage: {
+        'aa:tok_1:uid': 'anon_oauthBridge123',
+        'aa:tok_1:identified_uid': 'acct_123',
+      },
+    });
+
+    const identity = context.window.aa.getIdentity();
+    assert.equal(identity.anonymousId, 'anon_oauthBridge123');
+    assert.equal(identity.userId, 'acct_123');
+  });
+
   test('identify without traits sends no traits', () => {
     const { context, sends } = createTrackerContext();
     context.window.aa.identify('user_no_traits');

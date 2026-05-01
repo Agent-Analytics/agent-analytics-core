@@ -11,7 +11,8 @@ export const TRACKER_SOURCE_JS = `(function() {
       set: function() {},
       requireConsent: function() {},
       grantConsent: function() {},
-      revokeConsent: function() {}
+      revokeConsent: function() {},
+      getIdentity: function() { return { anonymousId: null, userId: null }; }
     };
   }
 
@@ -30,7 +31,8 @@ export const TRACKER_SOURCE_JS = `(function() {
       set: safeCall(api.set, undefined),
       requireConsent: safeCall(api.requireConsent, undefined),
       grantConsent: safeCall(api.grantConsent, undefined),
-      revokeConsent: safeCall(api.revokeConsent, undefined)
+      revokeConsent: safeCall(api.revokeConsent, undefined),
+      getIdentity: safeCall(api.getIdentity, { anonymousId: null, userId: null })
     };
   }
 
@@ -52,7 +54,8 @@ export const TRACKER_SOURCE_JS = `(function() {
       set: function(p) { console.log('[aa-dev] set', p || {}); },
       requireConsent: function() { console.log('[aa-dev] requireConsent'); },
       grantConsent: function() { console.log('[aa-dev] grantConsent'); },
-      revokeConsent: function() { console.log('[aa-dev] revokeConsent'); }
+      revokeConsent: function() { console.log('[aa-dev] revokeConsent'); },
+      getIdentity: function() { return { anonymousId: null, userId: null }; }
     });
     return;
   }
@@ -625,6 +628,13 @@ export const TRACKER_SOURCE_JS = `(function() {
           else globalProps[k] = clean[k];
         }
       }
+    },
+
+    getIdentity: function() {
+      return {
+        anonymousId: anonId,
+        userId: identifiedUserId || null
+      };
     },
 
     requireConsent: function() {
