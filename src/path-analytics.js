@@ -1,7 +1,7 @@
 import { parseSince, today } from './db/adapter.js';
 import { AnalyticsError, ERROR_CODES } from './errors.js';
 
-export const VALID_PATHS_SINCE = Object.freeze(['7d', '14d', '30d', '90d']);
+export const VALID_PATHS_SINCE = Object.freeze(['1d', '7d', '14d', '30d', '90d']);
 export const PATHS_DEFAULTS = Object.freeze({
   since: '30d',
   max_steps: 5,
