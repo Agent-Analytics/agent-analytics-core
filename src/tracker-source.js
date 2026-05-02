@@ -919,6 +919,56 @@ export const TRACKER_SOURCE_JS = `(function() {
     _scanImpressions = scan;
   })();
 
+  function safeErrorString(value, fallback) {
+    try { return String(value || ''); } catch(_err) { return fallback || ''; }
+  }
+
+  function redactErrorPatterns(value) {
+    try {
+      return safeErrorString(value)
+        .replace(/https?:\\/\\/[^\\s"'<>]+/gi, function(raw) {
+          try {
+            var u = new URL(raw);
+            return u.origin + u.pathname;
+          } catch(_err) {
+            return '[redacted]';
+          }
+        })
+        .replace(/[A-Z0-9._%+-]+%40[A-Z0-9.-]+\\.[A-Z]{2,}/gi, '[redacted]')
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi, '[redacted]')
+        .replace(/\\b(Bearer\\s+)[A-Za-z0-9._~+/-]{8,}/gi, '$1[redacted]')
+        .replace(/\\b(token|api_key|apikey|key|secret|password|access_token|refresh_token|auth|code)\\s*[:=]\\s*[^\\s&,;]+/gi, '$1=[redacted]')
+        .replace(/\\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\b/gi, '[redacted]')
+        .replace(/(^|[^A-Za-z0-9_-])([A-Za-z0-9_-]{32,})(?=$|[^A-Za-z0-9_-])/g, '$1[redacted]');
+    } catch(_err) {
+      return '[redacted]';
+    }
+  }
+
+  function sanitizeErrorText(value, maxLen) {
+    try {
+      var out = redactErrorPatterns(value);
+      return maxLen ? out.slice(0, maxLen) : out;
+    } catch(_err) {
+      return '';
+    }
+  }
+
+  function sanitizeErrorSource(value) {
+    try {
+      var raw = safeErrorString(value);
+      if (!raw) return '';
+      try {
+        var u = new URL(raw);
+        return redactErrorPatterns(u.origin + u.pathname).slice(0, 500);
+      } catch(_err) {
+        return redactErrorPatterns(raw.replace(/[?#].*$/, '')).slice(0, 500);
+      }
+    } catch(_err) {
+      return '';
+    }
+  }
+
   // --- JS error tracking ---
   if (TRACK_ERRORS) {
     var errSeen = {};
@@ -929,27 +979,31 @@ export const TRACKER_SOURCE_JS = `(function() {
 
     window.addEventListener('error', function(e) {
       if (errCount >= ERR_CAP) return;
-      var key = (e.message || '') + '|' + (e.filename || '') + '|' + (e.lineno || 0);
+      var safeMessage = sanitizeErrorText(e && e.message, 500);
+      var safeSource = sanitizeErrorSource(e && e.filename);
+      var key = safeMessage + '|' + safeSource + '|' + ((e && e.lineno) || 0);
       if (errSeen[key]) return;
       errSeen[key] = 1;
       errCount++;
       aa.track('$error', {
-        message: (e.message || '').slice(0, 500),
-        source: e.filename || '',
-        line: e.lineno || 0,
-        col: e.colno || 0
+        message: safeMessage,
+        source: safeSource,
+        line: (e && e.lineno) || 0,
+        col: (e && e.colno) || 0
       });
     });
 
     window.addEventListener('unhandledrejection', function(e) {
       if (errCount >= ERR_CAP) return;
-      var msg = e.reason instanceof Error ? e.reason.message : String(e.reason || '');
-      var key = msg + '||0';
+      var reason = e && e.reason;
+      var msg = reason instanceof Error ? reason.message : safeErrorString(reason);
+      var safeMessage = sanitizeErrorText(msg, 500);
+      var key = safeMessage + '||0';
       if (errSeen[key]) return;
       errSeen[key] = 1;
       errCount++;
       aa.track('$error', {
-        message: msg.slice(0, 500),
+        message: safeMessage,
         source: '',
         line: 0,
         col: 0
