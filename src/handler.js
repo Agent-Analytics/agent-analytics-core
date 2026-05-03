@@ -7,6 +7,7 @@
 
 import { TRACKER_JS } from './tracker.js';
 import { TRACKER_SOURCE_JS } from './tracker-source.js';
+import { TRACKER_CHECKSUMS } from './tracker-checksums.js';
 import { isBot } from './bot.js';
 import { AnalyticsError, ERROR_CODES, errorResponse } from './errors.js';
 import { GRANULARITY, DEFAULT_LIMIT, MAX_LIMIT, MAX_BATCH_SIZE, VALID_PAGE_TYPES, TOP_EVENTS_LIMIT, DEFAULT_SAMPLE_SIZE } from './constants.js';
@@ -16,6 +17,11 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
   'Access-Control-Allow-Credentials': 'false',
+};
+
+const TRACKER_CHECKSUM_HEADERS = {
+  'X-Agent-Analytics-Tracker-Checksum-Algorithm': TRACKER_CHECKSUMS.algorithm,
+  'X-Agent-Analytics-Tracker-SHA256': TRACKER_CHECKSUMS.trackerMinifiedSha256,
 };
 
 function json(data, status = 200) {
@@ -99,7 +105,7 @@ export function createAnalyticsHandler({ db, validateWrite, validateRead, useQue
     if (path === '/tracker.js') {
       return {
         response: new Response(TRACKER_JS, {
-          headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=3600, s-maxage=604800', ...CORS_HEADERS },
+          headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=3600, s-maxage=604800', ...TRACKER_CHECKSUM_HEADERS, ...CORS_HEADERS },
         }),
       };
     }

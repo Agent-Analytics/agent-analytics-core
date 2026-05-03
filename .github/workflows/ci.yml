@@ -18,6 +18,8 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
       - run: npm ci
+      - run: npm run build
+      - run: git diff --exit-code src/tracker.js src/tracker-source.js src/tracker-checksums.js
       - run: npm test
 
   browser-smoke:

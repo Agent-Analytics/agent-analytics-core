@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { createAnalyticsHandler } from '../src/handler.js';
 import { AnalyticsError, ERROR_CODES } from '../src/errors.js';
+import { TRACKER_CHECKSUMS } from '../src/index.js';
+
+function sha256Hex(value) {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
 
 function makeHandler(overrides = {}) {
   return createAnalyticsHandler({
@@ -25,7 +31,11 @@ test('core serves minified tracker with source and privacy header', async () => 
   const { response } = await handler(new Request('https://api.test/tracker.js'));
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('Content-Type'), 'application/javascript');
+  assert.equal(response.headers.get('X-Agent-Analytics-Tracker-Checksum-Algorithm'), 'sha256');
+  assert.equal(response.headers.get('X-Agent-Analytics-Tracker-SHA256'), TRACKER_CHECKSUMS.trackerMinifiedSha256);
   const text = await response.text();
+  assert.equal(sha256Hex(text), TRACKER_CHECKSUMS.trackerMinifiedSha256);
+  assert.equal(response.headers.get('X-Agent-Analytics-Tracker-SHA256'), sha256Hex(text));
   assert.match(text, /^\/\*! Agent Analytics tracker/);
   assert.match(text, /Source: \/tracker\.src\.js/);
   assert.match(text, /Privacy: no hard fingerprinting, dynamic script loading, eval, document\.write, or form value collection\./);

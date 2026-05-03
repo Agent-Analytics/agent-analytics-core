@@ -5,6 +5,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Privacy: default-minimal](https://img.shields.io/badge/privacy-default--minimal-2ea44f)
 ![Trust: readable tracker](https://img.shields.io/badge/trust-readable--tracker-6f42c1)
+![Trust: checksum verified](https://img.shields.io/badge/trust-checksum--verified-0969da)
 
 Analytics engine with zero dependencies. Bring your own database and auth, get a full analytics API that runs anywhere (Workers, Node, Deno, Bun).
 
@@ -31,6 +32,10 @@ Default privacy contract:
 - `aa.identify(userId, { email })` is explicit-only. Use a stable app/account id for `userId`; email is only for server-side project-scoped HMAC lookup and is stripped from event rows/profile traits by default.
 
 Tracker behavior is covered by unit tests, including privacy guardrails in [`test/tracker-privacy-guardrails.test.mjs`](./test/tracker-privacy-guardrails.test.mjs), URL sanitization in [`test/tracker-url-sanitization.test.mjs`](./test/tracker-url-sanitization.test.mjs), scoped storage/identity tests in [`test/storage-scoping.test.mjs`](./test/storage-scoping.test.mjs) and [`test/tracker-identity.test.mjs`](./test/tracker-identity.test.mjs), and route coverage for `/tracker.js` plus `/tracker.src.js` in [`test/handler-routes.test.mjs`](./test/handler-routes.test.mjs).
+
+### Tracker checksum verification
+
+The tracker build generates [`src/tracker-checksums.js`](./src/tracker-checksums.js), exporting `TRACKER_CHECKSUMS` with the sha256 digest for the minified served tracker. The `/tracker.js` route exposes the same value in the `X-Agent-Analytics-Tracker-SHA256` header so review can compare the served runtime artifact against the generated build output.
 
 ## How it works
 

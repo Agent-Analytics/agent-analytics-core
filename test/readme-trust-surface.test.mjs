@@ -18,6 +18,23 @@ test('README trust surface includes status, tests, license, and privacy/trust ba
   assert.match(readme, /license-MIT/);
   assert.match(readme, /privacy-default--minimal/);
   assert.match(readme, /trust-readable--tracker/);
+  assert.match(readme, /trust-checksum--verified/);
+});
+
+test('README documents tracker checksum verification surface', async () => {
+  const readme = await readReadme();
+  const requiredTerms = [
+    'trust-checksum--verified',
+    'Tracker checksum verification',
+    'src/tracker-checksums.js',
+    'TRACKER_CHECKSUMS',
+    'X-Agent-Analytics-Tracker-SHA256',
+    'sha256',
+  ];
+
+  for (const term of requiredTerms) {
+    assert.match(readme, new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
 });
 
 test('README links readable tracker source and hosted tracker endpoints', async () => {
