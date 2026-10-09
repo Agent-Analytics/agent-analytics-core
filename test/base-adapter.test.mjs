@@ -63,6 +63,26 @@ describe('BaseAdapter contract', () => {
 
   // --- Abstract methods ---
 
+  test('stats groups countries including unknown and keeps raw event totals', async () => {
+    const now = Date.now();
+    const insert = adapter.db.prepare('INSERT INTO events (id, project_id, event, country, user_id, timestamp, date) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    let id = 0;
+    for (const [country, user_id] of [['NL', 'u1'], ['NL', 'u1'], ['IL', 'u1'], [null, 'u2'], ['XX', 'u2'], ['T1', null]]) {
+      insert.run(String(++id), 'geo', 'play', country, user_id, now, new Date(now).toISOString().slice(0, 10));
+    }
+    insert.run(String(++id), 'other', 'play', 'US', 'u3', now, new Date(now).toISOString().slice(0, 10));
+    insert.run(String(++id), 'geo', 'play', 'US', 'u3', 1000, '1970-01-01');
+    const stats = await adapter.getStats({ project: 'geo', since: '7d' });
+    assert.deepEqual(stats.countries, [
+      { country: null, count: 3, unique_users: 1 },
+      { country: 'NL', count: 2, unique_users: 1 },
+      { country: 'IL', count: 1, unique_users: 1 },
+    ]);
+    assert.equal(stats.countries.reduce((sum, row) => sum + row.count, 0), stats.totals.total_events);
+    assert.equal(stats.totals.unique_users, 2);
+    assert.deepEqual((await adapter.getStats({ project: 'empty', since: '7d' })).countries, []);
+  });
+
   test('abstract methods throw when not overridden', async () => {
     const base = new BaseAdapter();
     await assert.rejects(() => base._run('', []), /not implemented/);

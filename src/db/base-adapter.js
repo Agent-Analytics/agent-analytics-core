@@ -275,7 +275,7 @@ export class BaseAdapter {
        FROM events WHERE project_id = ? AND ${dateCol} >= ?
        GROUP BY bucket ORDER BY bucket`;
 
-    const [timeSeries, eventCounts, totals, sessions] = await Promise.all([
+    const [timeSeries, eventCounts, totals, sessions, countries] = await Promise.all([
       this._queryAll(timeSeriesQuery, [project, bindVal]),
 
       this._queryAll(
@@ -292,6 +292,14 @@ export class BaseAdapter {
       ),
 
       this.getSessionStats({ project, since }),
+      this._queryAll(
+        `SELECT CASE WHEN country IS NULL OR country IN ('', 'XX', 'T1') THEN NULL ELSE country END AS country,
+                COUNT(*) AS count, COUNT(DISTINCT user_id) AS unique_users
+         FROM events WHERE project_id = ? AND date >= ?
+         GROUP BY CASE WHEN country IS NULL OR country IN ('', 'XX', 'T1') THEN NULL ELSE country END
+         ORDER BY count DESC, country ASC`,
+        [project, fromDate],
+      ),
     ]);
 
     return {
@@ -300,6 +308,7 @@ export class BaseAdapter {
       timeSeries,
       events: eventCounts,
       sessions,
+      countries,
     };
   }
 
