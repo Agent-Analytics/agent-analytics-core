@@ -156,11 +156,13 @@ curl "https://your-server.com/projects" -H "X-API-Key: KEY"
 - `POST /identify` — merge an anonymous visitor id into a known user id
 
 **Read** (API key required):
-- `GET /stats?project=X` — aggregated overview with time series, top events, sessions. Optional: `since`, `groupBy` (hour/day/week/month)
+- `GET /stats?project=X` — aggregated overview with time series, top events, sessions, and countries. Optional: `since`, `groupBy` (hour/day/week/month)
 - `GET /events?project=X` — raw event log. Optional: `event`, `session_id`, `since`, `limit`
 - `GET /projects` — all projects derived from events data
 
 **Utility:** `GET /health`, `GET /tracker.js`, `GET /tracker.src.js`
+
+Stats includes `countries: [{ country, count, unique_users }]`, sorted by raw event count for the requested project and period. Country is a two-letter code or `null` for missing/unknown geography (including `XX` and `T1`). Country event counts sum to `totals.total_events`; users who appear in multiple countries count in each, so country user counts are not additive.
 
 - `GET /tracker.js` — minified browser tracker with a source/privacy header.
 - `GET /tracker.src.js` — readable, unminified tracker source served as `application/javascript` for auditability.
