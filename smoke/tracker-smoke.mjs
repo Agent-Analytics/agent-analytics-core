@@ -73,6 +73,8 @@ function html({
   <button id="manual" type="button">Manual identify + track</button>
   <button id="decl" data-aa-event="cta_clicked" data-aa-event-plan="Pro" type="button">Declarative CTA</button>
   <button id="auto" class="primary cta" type="button">Auto CTA</button>
+  <button id="rage" class="rage-target" type="button"><span>Do not collect this rage label</span></button>
+  <button id="other" class="rage-target" type="button">Other control</button>
   <a id="outgoing" href="https://example.com/path?email=Leaky@Example.com&utm_source=keep&token=secret#frag">Outgoing</a>
   <a id="download" href="/files/report.pdf?email=Leaky@Example.com&download_token=secret#frag">Download</a>
   <form id="valid-form" name="validFixture" action="/submit?email=Leaky@Example.com&token=secret" method="post"><input name="ok" value="1"><button type="submit">Valid</button></form>
@@ -235,6 +237,30 @@ async function run() {
     assert.equal(autoClick.properties.tag, 'button');
     assert.equal(autoClick.properties.type, 'button');
     assert.match(autoClick.properties.classes, /primary/);
+
+    await page.evaluate(() => {
+      const rage = document.querySelector('#rage span');
+      const other = document.getElementById('other');
+      rage.click();
+      other.click();
+      rage.click();
+      other.click();
+      rage.click();
+      rage.click();
+    });
+    await eventually(() => assert.equal(events(capture.captures, 'rage_click').length, 1));
+    const rageClick = events(capture.captures, 'rage_click')[0];
+    assert.equal(rageClick.properties.id, 'rage');
+    assert.equal(rageClick.properties.tag, 'button');
+    assert.equal(rageClick.properties.type, 'button');
+    assert.match(rageClick.properties.classes, /rage-target/);
+    assert.ok(rageClick.properties.click_count >= 3);
+    assert.equal(rageClick.properties.text, undefined);
+    assert.equal(JSON.stringify(rageClick.properties).includes('Do not collect this rage label'), false);
+    const rageClicks = events(capture.captures, '$click').filter((e) => e.properties.id === 'rage');
+    assert.equal(rageClicks.length, 4);
+    assert.equal(rageClicks.some((e) => Object.prototype.hasOwnProperty.call(e.properties, 'click_count')), false);
+    assert.equal(events(capture.captures, 'rage_click').some((e) => e.properties.id === 'other'), false);
 
     await clickNoNav(page, '#outgoing');
     await eventually(() => assert.equal(events(capture.captures, 'outgoing_link').length, 1));

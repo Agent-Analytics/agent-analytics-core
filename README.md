@@ -28,10 +28,10 @@ Default privacy contract:
 - Automatic `url` and `referrer` fields are sanitized to origin plus pathname; query strings are not stored except the standard UTM keys (`utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`).
 - Anonymous and session identifiers are scoped to the project token or project name; legacy unscoped storage keys are not migrated into the scoped identity.
 - Local development on `localhost` and `127.0.0.1` logs to the console instead of sending network requests.
-- Higher-sensitivity automatic capture is opt-in: generic clicks, forms, downloads, errors, web vitals, performance timing, scroll depth, outgoing links, and SPA route listeners are disabled unless configured.
+- Higher-sensitivity automatic capture is opt-in: generic clicks, forms, downloads, errors, web vitals, performance timing, scroll depth, outgoing links, and SPA route listeners are disabled unless configured. Rage-click detection is part of generic click tracking (`data-track-clicks="true"`), not a separate listener.
 - `aa.identify(userId, { email })` is explicit-only. Use a stable app/account id for `userId`; email is only for server-side project-scoped HMAC lookup and is stripped from event rows/profile traits by default.
 
-Tracker behavior is covered by unit tests, including privacy guardrails in [`test/tracker-privacy-guardrails.test.mjs`](./test/tracker-privacy-guardrails.test.mjs), URL sanitization in [`test/tracker-url-sanitization.test.mjs`](./test/tracker-url-sanitization.test.mjs), scoped storage/identity tests in [`test/storage-scoping.test.mjs`](./test/storage-scoping.test.mjs) and [`test/tracker-identity.test.mjs`](./test/tracker-identity.test.mjs), and route coverage for `/tracker.js` plus `/tracker.src.js` in [`test/handler-routes.test.mjs`](./test/handler-routes.test.mjs).
+Tracker behavior is covered by unit tests, including privacy guardrails in [`test/tracker-privacy-guardrails.test.mjs`](./test/tracker-privacy-guardrails.test.mjs), URL sanitization in [`test/tracker-url-sanitization.test.mjs`](./test/tracker-url-sanitization.test.mjs), rage-click detection in [`test/rage-click.test.mjs`](./test/rage-click.test.mjs), scoped storage/identity tests in [`test/storage-scoping.test.mjs`](./test/storage-scoping.test.mjs) and [`test/tracker-identity.test.mjs`](./test/tracker-identity.test.mjs), and route coverage for `/tracker.js` plus `/tracker.src.js` in [`test/handler-routes.test.mjs`](./test/handler-routes.test.mjs).
 
 ### Tracker checksum verification
 
@@ -121,6 +121,20 @@ Track clicks without writing JavaScript — add `data-aa-event` to any HTML elem
 
 When clicked, this fires a `cta_click` event with `{ id: "hero_signup" }`. Add properties with `data-aa-event-*` attributes. Use this for simple click tracking; use `window.aa.track()` for events triggered by non-click interactions or when properties need to be computed dynamically.
 
+### Automatic clicks and rage clicks
+
+Generic click tracking is opt-in. Add `data-track-clicks="true"` to the tracker script:
+
+```html
+<script defer src="https://your-server.com/tracker.js" data-project="my-site" data-token="YOUR_TOKEN" data-track-clicks="true"></script>
+```
+
+A click on a link or button, including a click on something inside that control, emits `$click`. The tracked element is the nearest `a` or `button` (`Element.closest('a, button')`), the same node rage detection uses. Properties are `tag`, `id`, and `classes`, plus `href` and `is_external` for links or `type` for buttons. Visible label text and form values are not collected. Elements that already use `data-aa-event` are left to declarative tracking and do not also emit `$click`.
+
+That same click path emits `rage_click` when **3 clicks hit that same element inside a rolling 1000ms window**. `rage_click` repeats the `$click` element properties and adds `click_count` (how many clicks in the window triggered the detection). Each qualifying click still emits `$click`; rage detection is additive.
+
+Identity is that DOM node, not a CSS selector. Clicks on an inner icon count toward the surrounding link or button. Two controls that share a tag, id, or classes stay separate, including when their clicks are interleaved. One `rage_click` is sent per burst: further clicks on that node do not emit again while any click in the burst is still inside the 1000ms window. After the window no longer contains a click for that node, later clicks can start a new burst and emit again.
+
 ### Script attributes
 
 | Attribute | Description |
@@ -130,6 +144,7 @@ When clicked, this fires a `cta_click` event with `{ id: "hero_signup" }`. Add p
 | `data-link-domains` | Enable cross-subdomain identity linking |
 | `data-do-not-track` | Set to `"true"` to honor the browser's DNT signal |
 | `data-track-spa` | Set to `"true"` to track SPA route changes |
+| `data-track-clicks` | Set to `"true"` to emit `$click` on links and buttons, and `rage_click` when one of those elements is clicked 3 times within 1000ms |
 
 Set `localStorage.setItem('aa_disabled', 'true')` to disable tracking entirely (useful for internal teams or opt-out flows).
 

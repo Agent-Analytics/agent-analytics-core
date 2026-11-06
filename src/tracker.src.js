@@ -787,7 +787,56 @@
   }
 
   // --- Click tracking ---
+  // Rage clicks are additive and use the same opt-in as $click. Identity is the
+  // DOM node already resolved for $click (closest `a, button`), not a CSS path,
+  // so an inner icon counts toward its control and two controls never merge.
+  // Three clicks on that node inside a rolling RAGE_CLICK_WINDOW_MS window emit
+  // one rage_click. The burst stays closed while any of those clicks are still
+  // inside the window, so later clicks in the same rage do not emit again.
+  // When the window no longer contains a click for that node, the next click
+  // starts a new burst.
+  var RAGE_CLICK_THRESHOLD = 3;
+  var RAGE_CLICK_WINDOW_MS = 1000;
   if (TRACK_CLICKS) {
+    var rageBursts = [];
+
+    function rageBurstFor(el, now) {
+      var cutoff = now - RAGE_CLICK_WINDOW_MS;
+      var kept = [];
+      var found = null;
+      for (var i = 0; i < rageBursts.length; i++) {
+        var burst = rageBursts[i];
+        var recent = [];
+        for (var j = 0; j < burst.times.length; j++) {
+          if (burst.times[j] >= cutoff) recent.push(burst.times[j]);
+        }
+        if (!recent.length) continue;
+        burst.times = recent;
+        kept.push(burst);
+        if (burst.el === el) found = burst;
+      }
+      rageBursts = kept;
+      if (!found) {
+        found = { el: el, times: [], emitted: false };
+        rageBursts.push(found);
+      }
+      return found;
+    }
+
+    function noteRageClick(el, props) {
+      var now = Date.now();
+      var burst = rageBurstFor(el, now);
+      burst.times.push(now);
+      if (burst.emitted || burst.times.length < RAGE_CLICK_THRESHOLD) return;
+      burst.emitted = true;
+      var rageProps = {};
+      for (var key in props) {
+        if (Object.prototype.hasOwnProperty.call(props, key)) rageProps[key] = props[key];
+      }
+      rageProps.click_count = burst.times.length;
+      aa.track('rage_click', rageProps);
+    }
+
     document.addEventListener('click', function(e) {
       // Skip elements with declarative tracking to avoid double-tracking
       var decl = e.target.closest ? e.target.closest('[data-aa-event]') : null;
@@ -814,6 +863,7 @@
         props.type = el.type || 'submit';
       }
       aa.track('$click', props);
+      noteRageClick(el, props);
     });
   }
 
