@@ -23,7 +23,9 @@ jobs:
       - run: npm test
 
   browser-smoke:
-    runs-on: ubuntu-latest
+    # Playwright 1.59 has no apt dependency list for Ubuntu 26.04, and
+    # ubuntu-latest is 26.04. Pin the image this Playwright release supports.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
