@@ -28,7 +28,7 @@ Default privacy contract:
 - Automatic `url` and `referrer` fields are sanitized to origin plus pathname; query strings are not stored except the standard UTM keys (`utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`).
 - Anonymous and session identifiers are scoped to the project token or project name; legacy unscoped storage keys are not migrated into the scoped identity.
 - Local development on `localhost` and `127.0.0.1` logs to the console instead of sending network requests.
-- Higher-sensitivity automatic capture is opt-in: generic clicks, forms, downloads, errors, web vitals, performance timing, scroll depth, outgoing links, and SPA route listeners are disabled unless configured. Rage-click detection is part of generic click tracking (`data-track-clicks="true"`), not a separate listener.
+- Higher-sensitivity automatic capture is opt-in: generic clicks, forms, downloads, errors, web vitals, performance timing, scroll depth, outgoing links, and SPA route listeners are disabled unless configured. The default install snippet sets `data-track-vitals="true"`. `data-track-vitals="false"` leaves vitals off. Rage-click detection is part of generic click tracking (`data-track-clicks="true"`), not a separate listener.
 - `aa.identify(userId, { email })` is explicit-only. Use a stable app/account id for `userId`; email is only for server-side project-scoped HMAC lookup and is stripped from event rows/profile traits by default.
 
 Tracker behavior is covered by unit tests, including privacy guardrails in [`test/tracker-privacy-guardrails.test.mjs`](./test/tracker-privacy-guardrails.test.mjs), URL sanitization in [`test/tracker-url-sanitization.test.mjs`](./test/tracker-url-sanitization.test.mjs), rage-click detection in [`test/rage-click.test.mjs`](./test/rage-click.test.mjs), scoped storage/identity tests in [`test/storage-scoping.test.mjs`](./test/storage-scoping.test.mjs) and [`test/tracker-identity.test.mjs`](./test/tracker-identity.test.mjs), and route coverage for `/tracker.js` plus `/tracker.src.js` in [`test/handler-routes.test.mjs`](./test/handler-routes.test.mjs).
@@ -98,10 +98,10 @@ export default {
 ## Client-side tracking
 
 ```html
-<script defer src="https://your-server.com/tracker.js" data-project="my-site" data-token="YOUR_TOKEN"></script>
+<script defer src="https://your-server.com/tracker.js" data-project="my-site" data-token="YOUR_TOKEN" data-track-vitals="true"></script>
 ```
 
-Tracks the initial page view by default, with sanitized URL/referrer, screen size, browser, OS, device type, and allowlisted UTM params. SPA route-change tracking is explicit opt-in: add `data-track-spa="true"` to listen for URL changes via patched `pushState`/`replaceState`, `popstate`, and `hashchange`. Events are batched and flushed every 5s, or immediately on page hide via `sendBeacon`.
+Tracks the initial page view by default, with sanitized URL/referrer, screen size, browser, OS, device type, and allowlisted UTM params. The snippet sets `data-track-vitals="true"` so new installs send Core Web Vitals on `$web_vitals`. Set that attribute to `"false"` to leave vitals off. SPA route-change tracking is explicit opt-in: add `data-track-spa="true"` to listen for URL changes via patched `pushState`/`replaceState`, `popstate`, and `hashchange`. Events are batched and flushed every 5s, or immediately on page hide via `sendBeacon`.
 
 On `localhost` and `127.0.0.1`, the tracker skips all network requests and logs events to the browser console instead (prefixed `[aa-dev]`), so development traffic never pollutes production data.
 
@@ -126,7 +126,7 @@ When clicked, this fires a `cta_click` event with `{ id: "hero_signup" }`. Add p
 Generic click tracking is opt-in. Add `data-track-clicks="true"` to the tracker script:
 
 ```html
-<script defer src="https://your-server.com/tracker.js" data-project="my-site" data-token="YOUR_TOKEN" data-track-clicks="true"></script>
+<script defer src="https://your-server.com/tracker.js" data-project="my-site" data-token="YOUR_TOKEN" data-track-clicks="true" data-track-vitals="true"></script>
 ```
 
 A click on a link or button, including a click on something inside that control, emits `$click`. The tracked element is the nearest `a` or `button` (`Element.closest('a, button')`), the same node rage detection uses. Properties are `tag`, `id`, and `classes`, plus `href` and `is_external` for links or `type` for buttons. Visible label text and form values are not collected. Elements that already use `data-aa-event` are left to declarative tracking and do not also emit `$click`.
@@ -145,6 +145,7 @@ Identity is that DOM node, not a CSS selector. Clicks on an inner icon count tow
 | `data-do-not-track` | Set to `"true"` to honor the browser's DNT signal |
 | `data-track-spa` | Set to `"true"` to track SPA route changes |
 | `data-track-clicks` | Set to `"true"` to emit `$click` on links and buttons, and `rage_click` when one of those elements is clicked 3 times within 1000ms |
+| `data-track-vitals` | Set to `"true"` to send `$web_vitals` with `cwv_lcp`, `cwv_inp`, `cwv_cls`, `cwv_fcp`, `cwv_ttfb`, and CSS selector targets (`cwv_lcp_target`, `cwv_inp_target`, `cwv_cls_target`). The default snippet sets `"true"`. `"false"` leaves vitals off. |
 
 Set `localStorage.setItem('aa_disabled', 'true')` to disable tracking entirely (useful for internal teams or opt-out flows).
 

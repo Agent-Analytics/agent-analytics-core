@@ -737,11 +737,11 @@ export const TRACKER_SOURCE_JS = `(function() {
       };
     });
 
-    // --- bfcache route support ---
+    // bfcache route support. Vitals restart CLS/INP on pageshow(persisted)
+    // from the vitals block, including when this SPA flag is off.
     window.addEventListener('pageshow', function(e) {
       if (e.persisted) {
         if (_flushTimeOnPage) _flushTimeOnPage();
-        if (_flushWebVitals) _flushWebVitals();
         if (_flushScrollDepth) _flushScrollDepth();
         lastPath = location.pathname + location.search + location.hash;
         utm = getUtm();
@@ -1084,66 +1084,299 @@ export const TRACKER_SOURCE_JS = `(function() {
   }
 
   // --- Core Web Vitals ---
+  // Definitions follow web.dev: CLS is the largest session window, INP is the
+  // worst interaction after dropping one highest per 50, LCP and FCP are ignored
+  // when the page was hidden before that paint, and TTFB is responseStart minus
+  // activationStart. The path is the path at the start of this view.
   if (TRACK_VITALS) {
-    var cwvLcp = -1, cwvCls = 0, cwvInp = [];
-    var cwvFlushed = false;
+    var CWV_SELECTOR_MAX = 200;
+    var cwvPath = location.pathname;
+    var cwvLcp = -1, cwvLcpTarget = '';
+    var cwvFcp = -1;
+    var cwvTtfb = -1, cwvTtfbRead = false;
+    var cwvCls = 0, cwvClsTarget = '', cwvClsSupported = false;
+    var cwvSess = 0, cwvSessStart = 0, cwvSessLast = 0, cwvSessShift = -1, cwvSessTarget = '';
+    var cwvInps = [];
+    var cwvPOs = [];
+    var cwvLast = '';
+    var cwvFirstHidden = Infinity;
+
+    function cwvInitialHidden() {
+      if (document.visibilityState === 'hidden') return 0;
+      try {
+        var entries = performance.getEntriesByType && performance.getEntriesByType('visibility-state');
+        if (entries) {
+          for (var i = 0; i < entries.length; i++) {
+            var entry = entries[i];
+            if (entry && entry.name === 'hidden' && typeof entry.startTime === 'number') return entry.startTime;
+          }
+        }
+      } catch (_) {}
+      return Infinity;
+    }
+
+    function cwvHasUrl(value) {
+      return /https?:|\\/\\/|url\\(/i.test(String(value || ''));
+    }
+
+    function cwvSelector(node) {
+      if (node && node.nodeType !== 1) node = node.parentElement || node.parentNode;
+      var sel = '';
+      var depth = 0;
+      try {
+        while (node && node.nodeType === 1 && depth++ < 20) {
+          var part = '';
+          if (typeof node.id === 'string' && node.id && !cwvHasUrl(node.id)) {
+            part = '#' + node.id;
+          } else {
+            part = String(node.nodeName || '').toLowerCase();
+            var classes = [];
+            var list = node.classList;
+            if (list && list.length) {
+              for (var i = 0; i < list.length; i++) {
+                var name = list[i];
+                if (name && !cwvHasUrl(name)) classes.push(String(name));
+              }
+              if (classes.length) {
+                classes.sort();
+                part += '.' + classes.join('.');
+              }
+            }
+          }
+          if (!part || cwvHasUrl(part)) break;
+          if (sel.length + part.length > CWV_SELECTOR_MAX - 1) {
+            sel = sel || part;
+            break;
+          }
+          sel = sel ? part + '>' + sel : part;
+          if (part.charAt(0) === '#') break;
+          node = node.parentNode;
+        }
+      } catch (_) { return ''; }
+      if (!sel || cwvHasUrl(sel)) return '';
+      return sel.length > CWV_SELECTOR_MAX ? sel.slice(0, CWV_SELECTOR_MAX) : sel;
+    }
+
+    function cwvIdSelector(id) {
+      if (typeof id !== 'string' || !id || cwvHasUrl(id)) return '';
+      var sel = '#' + id;
+      return sel.length > CWV_SELECTOR_MAX ? sel.slice(0, CWV_SELECTOR_MAX) : sel;
+    }
+
+    function cwvShiftTarget(entry) {
+      var sources = entry && entry.sources;
+      if (!sources || !sources.length) return '';
+      for (var i = 0; i < sources.length; i++) {
+        var node = sources[i] && sources[i].node;
+        if (node && node.nodeType === 1) return cwvSelector(node);
+      }
+      return '';
+    }
+
+    function cwvOnShifts(entries) {
+      for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i];
+        if (!entry || entry.hadRecentInput) continue;
+        var value = typeof entry.value === 'number' ? entry.value : 0;
+        var t = typeof entry.startTime === 'number' ? entry.startTime : 0;
+        if (cwvSess && t - cwvSessLast < 1000 && t - cwvSessStart < 5000) {
+          cwvSess += value;
+        } else {
+          cwvSess = value;
+          cwvSessStart = t;
+          cwvSessShift = -1;
+          cwvSessTarget = '';
+        }
+        cwvSessLast = t;
+        if (value >= cwvSessShift) {
+          cwvSessShift = value;
+          cwvSessTarget = cwvShiftTarget(entry);
+        }
+        if (cwvSess > cwvCls) {
+          cwvCls = cwvSess;
+          cwvClsTarget = cwvSessTarget;
+        }
+      }
+    }
+
+    function cwvOnLcp(entries) {
+      for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i];
+        if (!entry || typeof entry.startTime !== 'number' || !(entry.startTime < cwvFirstHidden)) continue;
+        cwvLcp = entry.startTime;
+        cwvLcpTarget = entry.element ? cwvSelector(entry.element) : cwvIdSelector(entry.id);
+      }
+    }
+
+    function cwvOnPaint(entries) {
+      for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i];
+        if (!entry || entry.name !== 'first-contentful-paint' || cwvFcp >= 0) continue;
+        if (typeof entry.startTime === 'number' && entry.startTime < cwvFirstHidden) cwvFcp = entry.startTime;
+      }
+    }
+
+    function cwvOnEvents(entries) {
+      for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i];
+        if (!entry || !entry.interactionId) continue;
+        var dur = typeof entry.duration === 'number' ? entry.duration : 0;
+        var known = null;
+        for (var j = 0; j < cwvInps.length; j++) {
+          if (cwvInps[j].id === entry.interactionId) { known = cwvInps[j]; break; }
+        }
+        var target = entry.target ? cwvSelector(entry.target) : '';
+        if (!known) cwvInps.push({ id: entry.interactionId, dur: dur, target: target });
+        else if (dur > known.dur) { known.dur = dur; known.target = target; }
+        else if (dur === known.dur && !known.target && target) known.target = target;
+      }
+    }
+
+    function cwvObserve(opts, onEntries) {
+      if (typeof PerformanceObserver !== 'function') return false;
+      try {
+        var po = new PerformanceObserver(function(list) {
+          var entries = list && list.getEntries ? list.getEntries() : null;
+          if (entries && entries.length) onEntries(entries);
+        });
+        po.observe(opts);
+        cwvPOs.push({ po: po, onEntries: onEntries });
+        return true;
+      } catch (_) { return false; }
+    }
+
+    function cwvDrain() {
+      for (var i = 0; i < cwvPOs.length; i++) {
+        var item = cwvPOs[i];
+        try {
+          var pending = item.po.takeRecords && item.po.takeRecords();
+          if (pending && pending.length) item.onEntries(pending);
+        } catch (_) {}
+      }
+    }
+
+    function cwvEnsureTtfb() {
+      if (cwvTtfbRead) return;
+      cwvTtfbRead = true;
+      var nav = null;
+      try { nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0]; } catch (_) { nav = null; }
+      if (!nav || typeof nav.responseStart !== 'number' || !(nav.responseStart >= 0)) return;
+      var activation = typeof nav.activationStart === 'number' && nav.activationStart > 0 ? nav.activationStart : 0;
+      var value = nav.responseStart - activation;
+      cwvTtfb = value > 0 ? value : 0;
+    }
+
+    function cwvPickInp() {
+      var n = cwvInps.length;
+      if (!n) return null;
+      var ranked = cwvInps.slice().sort(function(a, b) { return b.dur - a.dur; });
+      return ranked[Math.min(n - 1, Math.floor(n / 50))];
+    }
+
+    function cwvResetClsInp() {
+      cwvCls = 0;
+      cwvClsTarget = '';
+      cwvSess = 0;
+      cwvSessStart = 0;
+      cwvSessLast = 0;
+      cwvSessShift = -1;
+      cwvSessTarget = '';
+      cwvInps = [];
+    }
+
+    function cwvBuild() {
+      cwvEnsureTtfb();
+      var props = { path: cwvPath };
+      var any = false;
+      if (cwvLcp >= 0) {
+        props.cwv_lcp = Math.round(cwvLcp);
+        any = true;
+        if (cwvLcpTarget) props.cwv_lcp_target = cwvLcpTarget;
+      }
+      var inp = cwvPickInp();
+      if (inp) {
+        props.cwv_inp = Math.round(inp.dur);
+        any = true;
+        if (inp.target) props.cwv_inp_target = inp.target;
+      }
+      if (cwvClsSupported) {
+        props.cwv_cls = Math.round(cwvCls * 1000) / 1000;
+        any = true;
+        if (cwvClsTarget) props.cwv_cls_target = cwvClsTarget;
+      }
+      if (cwvFcp >= 0) {
+        props.cwv_fcp = Math.round(cwvFcp);
+        any = true;
+      }
+      if (cwvTtfb >= 0) {
+        props.cwv_ttfb = Math.round(cwvTtfb);
+        any = true;
+      }
+      return any ? props : null;
+    }
 
     function cwvFlush() {
-      if (cwvFlushed) return;
-      if (cwvLcp < 0 && cwvCls === 0 && cwvInp.length === 0) return;
-      cwvFlushed = true;
-      var props = { path: location.pathname };
-      if (cwvLcp >= 0) props.cwv_lcp = Math.round(cwvLcp);
-      props.cwv_cls = Math.round(cwvCls * 1000) / 1000;
-      if (cwvInp.length > 0) {
-        cwvInp.sort(function(a, b) { return a - b; });
-        var idx = Math.min(Math.ceil(cwvInp.length * 0.98) - 1, cwvInp.length - 1);
-        props.cwv_inp = cwvInp[Math.max(idx, 0)];
-      }
+      cwvDrain();
+      var props = cwvBuild();
+      if (!props) return;
+      var snap = '';
+      try { snap = JSON.stringify(props); } catch (_) { snap = ''; }
+      if (snap && snap === cwvLast) return;
+      cwvLast = snap;
       aa.track('$web_vitals', props);
+      flush();
     }
 
-    function cwvReset() {
+    function cwvMarkHidden(event) {
+      if (cwvFirstHidden !== Infinity) return;
+      var ts = event && typeof event.timeStamp === 'number' ? event.timeStamp : 0;
+      cwvFirstHidden = ts;
+    }
+
+    function cwvOnHidden(event) {
+      cwvMarkHidden(event);
+      cwvFlush();
+    }
+
+    function cwvResetView() {
       cwvFlush();
       cwvLcp = -1;
-      cwvCls = 0;
-      cwvInp = [];
-      cwvFlushed = false;
+      cwvLcpTarget = '';
+      cwvFcp = -1;
+      cwvTtfb = -1;
+      cwvTtfbRead = true;
+      cwvResetClsInp();
+      cwvPath = location.pathname;
+      cwvLast = '';
     }
 
-    // LCP
-    try {
-      new PerformanceObserver(function(list) {
-        var entries = list.getEntries();
-        if (entries.length) cwvLcp = entries[entries.length - 1].startTime;
-      }).observe({ type: 'largest-contentful-paint', buffered: true });
-    } catch(_) {}
+    function cwvRestore() {
+      cwvResetClsInp();
+      cwvPath = location.pathname;
+      cwvFirstHidden = document.visibilityState === 'hidden' ? 0 : Infinity;
+      cwvLast = '';
+    }
 
-    // CLS
+    cwvFirstHidden = cwvInitialHidden();
     try {
-      new PerformanceObserver(function(list) {
-        var entries = list.getEntries();
-        for (var i = 0; i < entries.length; i++) {
-          if (!entries[i].hadRecentInput) cwvCls += entries[i].value;
-        }
-      }).observe({ type: 'layout-shift', buffered: true });
-    } catch(_) {}
+      var supported = PerformanceObserver.supportedEntryTypes;
+      if (supported && supported.indexOf('layout-shift') !== -1) cwvClsSupported = true;
+    } catch (_) { cwvClsSupported = false; }
+    if (cwvClsSupported && !cwvObserve({ type: 'layout-shift', buffered: true }, cwvOnShifts)) {
+      cwvClsSupported = false;
+    }
+    cwvObserve({ type: 'largest-contentful-paint', buffered: true }, cwvOnLcp);
+    cwvObserve({ type: 'paint', buffered: true }, cwvOnPaint);
+    cwvObserve({ type: 'event', buffered: true, durationThreshold: 16 }, cwvOnEvents);
 
-    // INP
-    try {
-      new PerformanceObserver(function(list) {
-        var entries = list.getEntries();
-        for (var i = 0; i < entries.length; i++) {
-          if (entries[i].interactionId) cwvInp.push(entries[i].duration);
-        }
-      }).observe({ type: 'event', buffered: true, durationThreshold: 16 });
-    } catch(_) {}
-
-    document.addEventListener('visibilitychange', function() {
-      if (document.visibilityState === 'hidden') cwvFlush();
+    document.addEventListener('visibilitychange', function(e) {
+      if (document.visibilityState === 'hidden') cwvOnHidden(e);
     });
-    window.addEventListener('beforeunload', cwvFlush);
-    _flushWebVitals = cwvReset;
+    window.addEventListener('pagehide', cwvOnHidden);
+    window.addEventListener('pageshow', function(e) {
+      if (e && e.persisted) cwvRestore();
+    });
+    _flushWebVitals = cwvResetView;
   }
 
   // --- Scroll depth tracking ---
