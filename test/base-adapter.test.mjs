@@ -528,6 +528,101 @@ describe('BaseAdapter contract', () => {
     );
   });
 
+  test('query groups by one properties key and keeps nulls', async () => {
+    const now = Date.now();
+    const date = new Date(now).toISOString().slice(0, 10);
+    await adapter.trackEvent({ project: 'p', event: 'view', properties: { path: '/a' }, user_id: 'u1', timestamp: now });
+    await adapter.trackEvent({ project: 'p', event: 'view', properties: { path: '/a' }, user_id: 'u2', timestamp: now });
+    await adapter.trackEvent({ project: 'p', event: 'view', properties: { path: '/b' }, user_id: 'u1', timestamp: now });
+    await adapter.trackEvent({ project: 'p', event: 'view', properties: {}, user_id: 'u3', timestamp: now });
+    await adapter.trackEvent({ project: 'other', event: 'view', properties: { path: '/a' }, user_id: 'u9', timestamp: now });
+
+    const result = await adapter.query({
+      project: 'p',
+      metrics: ['event_count', 'unique_users'],
+      filters: [{ field: 'event', op: 'eq', value: 'view' }],
+      date_from: date,
+      date_to: date,
+      group_by: ['date', 'properties.path'],
+      order_by: 'properties.path',
+      order: 'asc',
+      limit: 1000,
+    });
+
+    assert.deepEqual(result.group_by, ['date', 'properties.path']);
+    assert.equal(result.count, 3);
+    const byPath = Object.fromEntries(result.rows.map((row) => [String(row['properties.path']), row]));
+    assert.equal(byPath['/a'].event_count, 2);
+    assert.equal(byPath['/a'].unique_users, 2);
+    assert.equal(byPath['/b'].event_count, 1);
+    assert.equal(byPath.null.event_count, 1);
+    assert.equal(byPath.null['properties.path'], null);
+  });
+
+  test('query correlates a property group in session_then_user counts', async () => {
+    const now = Date.now();
+    await adapter.trackEvent({
+      project: 'p',
+      event: 'view',
+      properties: { path: '/a' },
+      user_id: 'u1',
+      session_id: 's1',
+      timestamp: now,
+    });
+    await adapter.trackEvent({
+      project: 'p',
+      event: 'view',
+      properties: { path: '/a' },
+      user_id: 'u1',
+      session_id: 's1',
+      timestamp: now,
+    });
+
+    const result = await adapter.query({
+      project: 'p',
+      metrics: ['event_count'],
+      group_by: ['properties.path'],
+      count_mode: 'session_then_user',
+    });
+
+    assert.equal(result.rows.length, 1);
+    assert.equal(result.rows[0]['properties.path'], '/a');
+    assert.equal(result.rows[0].event_count, 1);
+  });
+
+  test('query rejects a second properties group and an invalid property key', async () => {
+    await assert.rejects(
+      () => adapter.query({ project: 'p', group_by: ['properties.path', 'properties.referrer'] }),
+      (err) => err.code === 'INVALID_GROUP_BY' && /at most one/.test(err.message),
+    );
+    await assert.rejects(
+      () => adapter.query({ project: 'p', group_by: ['properties.bad-key'] }),
+      (err) => err.code === 'INVALID_PROPERTY_KEY' && err.message === 'Invalid property group-by key',
+    );
+    await assert.rejects(
+      () => adapter.query({ project: 'p', group_by: [`properties.${'a'.repeat(65)}`] }),
+      (err) => err.code === 'INVALID_PROPERTY_KEY' && err.status === 400,
+    );
+    const key64 = 'a'.repeat(64);
+    await adapter.trackEvent({
+      project: 'p',
+      event: 'click',
+      user_id: 'u-key',
+      timestamp: Date.now(),
+      properties: { [key64]: 'yes' },
+    });
+    const grouped = await adapter.query({
+      project: 'p',
+      metrics: ['event_count'],
+      group_by: [`properties.${key64}`],
+    });
+    assert.equal(grouped.rows.some((row) => row[`properties.${key64}`] === 'yes'), true);
+    await assert.rejects(
+      () => adapter.query({ project: 'p', metrics: ['event_count'], count_mode: 'unique' }),
+      (err) => err.code === 'INVALID_COUNT_MODE' && err.status === 400,
+    );
+  });
+
   // --- listProjects ---
 
   test('listProjects returns projects from events', async () => {

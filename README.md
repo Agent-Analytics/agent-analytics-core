@@ -64,6 +64,21 @@ The handler returns a standard `Response`. Write operations are deferred so you 
 
 Initialize your database with the included `schema.sql`.
 
+## Read-only SQL and property group-by
+
+`POST /query` group_by accepts the existing fields plus one `properties.<key>`. The key uses `validatePropertyKey` (`^[A-Za-z0-9_]+$`) and is at most 64 characters. An invalid group-by key reports `Invalid property group-by key`. Two `properties.*` entries throw `INVALID_GROUP_BY`. Result rows use the key `properties.<key>`. Missing values group as null. Filter keys stay at the 128 character `validatePropertyKey` limit.
+
+`validateReadOnlySql(sql)` returns `{ ok: true }` or `{ ok: false, error }`. It accepts one `SELECT` up to 20 KB. `events` and `sessions` may each be referenced once, so one join of the two tables is allowed and a self-join is not. After `FROM`, `JOIN`, or a comma in a `FROM` list, a parenthesis is either a subquery (`SELECT`, `WITH`, or `VALUES`) or a nested `FROM` clause, checked at any depth with the same allow-list. A parenthesis after `IN` is a subquery or an expression list, because `IN (table)` does not read that table. A bare name after `IN` is a table reference. A table-valued function is rejected. `replace(` is allowed as a scalar function. `REPLACE INTO` and `INSERT OR REPLACE` stay rejected. It also rejects a leading `WITH`, a recursive CTE, `randomblob`, `zeroblob`, extra statements, bind parameters, write keywords outside string literals (`INSERT`, `UPDATE`, `DELETE`, `ALTER`, `DROP`, `CREATE`, `ATTACH`, `DETACH`, `PRAGMA`, `VACUUM`, `REINDEX`, and `REPLACE` except the scalar call), schema-qualified names (`main`, `temp`, quoted forms, and comments that split the dot), `sqlite_master`, `sqlite_schema`, `sqlite_temp_master`, `sqlite_temp_schema`, and any other table. A user `LIMIT` must be a plain non-negative integer. When the statement has no `LIMIT`, the wrapper inserts a newline and then `LIMIT 1001`, so a trailing `--` comment cannot swallow the cap.
+
+`resolveSqlWindow(window, now?)` returns `{ date_from, date_to }`. Omit `window` for 7 inclusive UTC days ending today. `window` is `{ days }` (integer 1 through 90) or `{ date_from, date_to }` (`YYYY-MM-DD`, inclusive span at most 90 days). An invalid window throws `INVALID_WINDOW`.
+
+`wrapProjectSql(sql, projectName, window)` returns `{ sql, params, returnLimit, probeTruncation, window }`. `params` is `[projectName, date_from, date_to, projectName, date_from, date_to]`. The date predicate uses `idx_events_project_date` and `idx_sessions_project_date`. `timestamp` and `start_time` are not the window columns because they do not have a project-scoped range index. The wrapper CTEs are:
+
+- `events(id, event, properties, user_id, session_id, timestamp, date, country)`
+- `sessions(session_id, user_id, project_id, start_time, end_time, duration, entry_page, exit_page, event_count, is_bounce, date)`
+
+`resolved_user_id` is not exposed. The CTE bodies read `main.events` and `main.sessions` because SQLite reports a circular reference when a CTE selects from its own name. Callers that need truncation fetch `SQL_FETCH_CAP` (1001) and return at most `SQL_ROW_CAP` (1000). `probeTruncation` is true when the wrapper fetched one extra row to detect that cap. A user `LIMIT` of 1000 or below is left unchanged.
+
 ## Cloudflare Workers
 
 ```js

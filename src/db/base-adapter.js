@@ -29,10 +29,66 @@ import {
 } from '../constants.js';
 import { buildPathsQueries, buildPathsResponse, validatePathsOptions } from '../path-analytics.js';
 
-export function validatePropertyKey(key) {
+export function validatePropertyKey(key, usage = 'filter') {
   if (!key || key.length > 128 || !/^[a-zA-Z0-9_]+$/.test(key)) {
-    throw new AnalyticsError(ERROR_CODES.INVALID_PROPERTY_KEY, 'Invalid property filter key', 400);
+    const kind = usage === 'group-by' ? 'group-by key' : 'filter key';
+    throw new AnalyticsError(ERROR_CODES.INVALID_PROPERTY_KEY, `Invalid property ${kind}`, 400);
   }
+}
+
+const PROPERTY_GROUP_PREFIX = 'properties.';
+const PROPERTY_GROUP_KEY_MAX = 64;
+
+export function isPropertyGroupBy(value) {
+  return typeof value === 'string' && value.startsWith(PROPERTY_GROUP_PREFIX);
+}
+
+export function assertQueryGroupBy(groupBy) {
+  if (!Array.isArray(groupBy)) {
+    throw new AnalyticsError(ERROR_CODES.INVALID_GROUP_BY, 'group_by must be an array', 400);
+  }
+  const propertyGroups = groupBy.filter((group) => isPropertyGroupBy(group));
+  if (propertyGroups.length > 1) {
+    throw new AnalyticsError(
+      ERROR_CODES.INVALID_GROUP_BY,
+      'group_by accepts at most one properties.<key>',
+      400,
+    );
+  }
+  for (const group of groupBy) {
+    if (isPropertyGroupBy(group)) {
+      const key = group.slice(PROPERTY_GROUP_PREFIX.length);
+      if (key.length > PROPERTY_GROUP_KEY_MAX) {
+        throw new AnalyticsError(ERROR_CODES.INVALID_PROPERTY_KEY, 'Invalid property group-by key', 400);
+      }
+      validatePropertyKey(key, 'group-by');
+      continue;
+    }
+    if (!ALLOWED_GROUP_BY.includes(group)) {
+      throw new AnalyticsError(
+        ERROR_CODES.INVALID_GROUP_BY,
+        `invalid group_by: ${group}. allowed: ${ALLOWED_GROUP_BY.join(', ')}, properties.<key>`,
+        400,
+      );
+    }
+  }
+  return groupBy;
+}
+
+export function groupByValueSql(alias, column) {
+  if (isPropertyGroupBy(column)) {
+    const key = column.slice(PROPERTY_GROUP_PREFIX.length);
+    return `json_extract(${alias}.properties, '$.${key}')`;
+  }
+  return `${alias}.${column}`;
+}
+
+function groupByResultSql(alias, column) {
+  if (isPropertyGroupBy(column)) {
+    const key = column.slice(PROPERTY_GROUP_PREFIX.length);
+    return `${groupByValueSql(alias, column)} as "properties.${key}"`;
+  }
+  return `${alias}.${column} as ${column}`;
 }
 
 function getFilterFieldSuggestion(field) {
@@ -95,7 +151,9 @@ function buildEventCountSelect(countMode, groupBy = []) {
 }
 
 function buildNullSafeEquality(column, leftAlias, rightAlias) {
-  return `((${leftAlias}.${column} = ${rightAlias}.${column}) OR (${leftAlias}.${column} IS NULL AND ${rightAlias}.${column} IS NULL))`;
+  const left = groupByValueSql(leftAlias, column);
+  const right = groupByValueSql(rightAlias, column);
+  return `((${left} = ${right}) OR (${left} IS NULL AND ${right} IS NULL))`;
 }
 
 function buildSessionThenUserEventCountSelect(groupBy = []) {
@@ -376,12 +434,10 @@ export class BaseAdapter {
     for (const m of metrics) {
       if (!ALLOWED_METRICS.includes(m)) throw new AnalyticsError(ERROR_CODES.INVALID_METRIC, `invalid metric: ${m}. allowed: ${ALLOWED_METRICS.join(', ')}`, 400);
     }
-    for (const g of group_by) {
-      if (!ALLOWED_GROUP_BY.includes(g)) throw new AnalyticsError(ERROR_CODES.INVALID_GROUP_BY, `invalid group_by: ${g}. allowed: ${ALLOWED_GROUP_BY.join(', ')}`, 400);
-    }
+    assertQueryGroupBy(group_by);
     const resolvedCountMode = resolveCountMode(metrics, count_mode);
 
-    const selectParts = group_by.map((column) => `current.${column} as ${column}`);
+    const selectParts = group_by.map((column) => groupByResultSql('current', column));
     for (const m of metrics) {
       if (m === METRICS.EVENT_COUNT) selectParts.push(buildEventCountSelect(resolvedCountMode, group_by));
       if (m === METRICS.UNIQUE_USERS) selectParts.push('COUNT(DISTINCT current.user_id) as unique_users');
@@ -451,12 +507,14 @@ export class BaseAdapter {
       SELECT * FROM events WHERE ${whereParts.join(' AND ')}
     )
     SELECT ${selectParts.join(', ')} FROM filtered current`;
-    if (group_by.length > 0) sql += ` GROUP BY ${group_by.map((column) => `current.${column}`).join(', ')}`;
+    if (group_by.length > 0) sql += ` GROUP BY ${group_by.map((column) => groupByValueSql('current', column)).join(', ')}`;
 
     const defaultOrder = group_by.includes(GROUP_BY_FIELDS.DATE) ? GROUP_BY_FIELDS.DATE : metrics[0];
-    const orderField = order_by && ALLOWED_ORDER_BY.includes(order_by) ? order_by : defaultOrder;
+    const propertyOrder = isPropertyGroupBy(order_by) && group_by.includes(order_by);
+    const orderField = order_by && (ALLOWED_ORDER_BY.includes(order_by) || propertyOrder) ? order_by : defaultOrder;
+    const orderExpr = propertyOrder ? groupByValueSql('current', order_by) : orderField;
     const orderDir = order === 'asc' ? 'ASC' : 'DESC';
-    sql += ` ORDER BY ${orderField} ${orderDir}`;
+    sql += ` ORDER BY ${orderExpr} ${orderDir}`;
 
     const maxLimit = Math.min(limit, MAX_LIMIT);
     sql += ` LIMIT ?`;

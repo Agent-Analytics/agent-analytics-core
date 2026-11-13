@@ -1,5 +1,23 @@
 export { createAnalyticsHandler } from './handler.js'
-export { BaseAdapter, validatePropertyKey } from './db/base-adapter.js'
+export {
+  BaseAdapter,
+  validatePropertyKey,
+  isPropertyGroupBy,
+  assertQueryGroupBy,
+  groupByValueSql,
+} from './db/base-adapter.js'
+export {
+  validateReadOnlySql,
+  wrapProjectSql,
+  resolveSqlWindow,
+  SQL_MAX_BYTES,
+  SQL_ROW_CAP,
+  SQL_FETCH_CAP,
+  SQL_MAX_TABLE_REFS,
+  SQL_WINDOW_DEFAULT_DAYS,
+  SQL_WINDOW_MAX_DAYS,
+  READ_ONLY_SQL_COLUMNS,
+} from './sql.js'
 export { D1Adapter } from './db/d1.js'
 export { formatDate, today, daysAgo, parseSince, parseSinceMs } from './db/adapter.js'
 export { TRACKER_JS } from './tracker.js'
