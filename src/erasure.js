@@ -414,6 +414,14 @@ async function deleteProfiles(db, project, userIds) {
   return deleted;
 }
 
+function normalizeEmailLookup(lookup) {
+  if (!lookup || typeof lookup !== 'object') return null;
+  const scopeId = lookup.scopeId || lookup.scope_id;
+  const lookupIndex = lookup.lookupIndex || lookup.lookup_index;
+  if (!scopeId || !lookupIndex) return null;
+  return { scopeId, lookupIndex };
+}
+
 async function deleteEmailLookups(db, project, userIds, emailLookups) {
   const keys = new Map();
   const remember = (row) => {
@@ -430,8 +438,7 @@ async function deleteEmailLookups(db, project, userIds, emailLookups) {
     for (const row of rows) remember(row);
   }
 
-  for (const lookup of emailLookups || []) {
-    if (!lookup?.scopeId || !lookup?.lookupIndex) continue;
+  for (const lookup of (emailLookups || []).map(normalizeEmailLookup).filter(Boolean)) {
     const rows = await db.queryAll(
       `SELECT scope_id, user_id FROM email_lookup_index
         WHERE project_id = ? AND scope_id = ? AND lookup_index = ?`,
@@ -643,7 +650,9 @@ export async function reapplyErasureReceipt(db, receipt, { includeHostedIdentity
     includeHostedIdentity,
   });
   const counts = emptyErasureCounts();
-  const lookups = Array.isArray(receipt.email_lookups) ? receipt.email_lookups : [];
+  const lookups = (Array.isArray(receipt.email_lookups) ? receipt.email_lookups : [])
+    .map(normalizeEmailLookup)
+    .filter(Boolean);
   if (found.userIds.length > 0 || lookups.length > 0) {
     const erased = await eraseSubjectRows(db, {
       project,
