@@ -9,9 +9,13 @@ export {
 export {
   validateReadOnlySql,
   wrapProjectSql,
+  resolveSqlWindow,
   SQL_MAX_BYTES,
   SQL_ROW_CAP,
   SQL_FETCH_CAP,
+  SQL_MAX_TABLE_REFS,
+  SQL_WINDOW_DEFAULT_DAYS,
+  SQL_WINDOW_MAX_DAYS,
   READ_ONLY_SQL_COLUMNS,
 } from './sql.js'
 export { D1Adapter } from './db/d1.js'

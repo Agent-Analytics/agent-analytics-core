@@ -68,9 +68,11 @@ Initialize your database with the included `schema.sql`.
 
 `POST /query` group_by accepts the existing fields plus one `properties.<key>`. The key uses `validatePropertyKey` (`^[A-Za-z0-9_]{1,128}$`). Two `properties.*` entries throw `INVALID_GROUP_BY`. Result rows use the key `properties.<key>`. Missing values group as null.
 
-`validateReadOnlySql(sql)` returns `{ ok: true }` or `{ ok: false, error }`. It accepts one `SELECT` up to 20 KB. It rejects a leading `WITH`, extra statements, bind parameters, write keywords outside string literals (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `ALTER`, `DROP`, `CREATE`, `ATTACH`, `DETACH`, `PRAGMA`, `VACUUM`, `REINDEX`), schema-qualified names (`main`, `temp`, quoted forms, and comments that split the dot), `sqlite_master`, `sqlite_schema`, `sqlite_temp_master`, `sqlite_temp_schema`, and any table other than `events` and `sessions`.
+`validateReadOnlySql(sql)` returns `{ ok: true }` or `{ ok: false, error }`. It accepts one `SELECT` up to 20 KB with at most 2 references to `events` or `sessions`. It rejects a leading `WITH`, a recursive CTE, extra statements, bind parameters, write keywords outside string literals (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `ALTER`, `DROP`, `CREATE`, `ATTACH`, `DETACH`, `PRAGMA`, `VACUUM`, `REINDEX`), schema-qualified names (`main`, `temp`, quoted forms, and comments that split the dot), `sqlite_master`, `sqlite_schema`, `sqlite_temp_master`, `sqlite_temp_schema`, and any table other than `events` and `sessions`.
 
-`wrapProjectSql(sql, projectName)` returns `{ sql, params, returnLimit, probeTruncation }`. `params` is `[projectName, projectName]` for the events filter and then the sessions filter. The wrapper CTEs are:
+`resolveSqlWindow(window, now?)` returns `{ date_from, date_to }`. Omit `window` for 7 inclusive UTC days ending today. `window` is `{ days }` (integer 1 through 90) or `{ date_from, date_to }` (`YYYY-MM-DD`, inclusive span at most 90 days). An invalid window throws `INVALID_WINDOW`.
+
+`wrapProjectSql(sql, projectName, window)` returns `{ sql, params, returnLimit, probeTruncation, window }`. `params` is `[projectName, date_from, date_to, projectName, date_from, date_to]`. The date predicate uses `idx_events_project_date` and `idx_sessions_project_date`. `timestamp` and `start_time` are not the window columns because they do not have a project-scoped range index. The wrapper CTEs are:
 
 - `events(id, event, properties, user_id, session_id, timestamp, date, country)`
 - `sessions(session_id, user_id, project_id, start_time, end_time, duration, entry_page, exit_page, event_count, is_bounce, date)`

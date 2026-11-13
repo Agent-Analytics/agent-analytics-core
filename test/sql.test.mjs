@@ -6,6 +6,7 @@ import {
   SQL_FETCH_CAP,
   SQL_MAX_BYTES,
   SQL_ROW_CAP,
+  resolveSqlWindow,
   validateReadOnlySql,
   wrapProjectSql,
 } from '../src/sql.js';
@@ -25,17 +26,21 @@ function database() {
     CREATE TABLE user_profiles (project_id TEXT, user_id TEXT, traits TEXT);
     INSERT INTO events VALUES
       ('1', 'secret', 'page', '{"path":"/secret"}', 'u', 's', 1, '2026-01-01', 'US', 'resolved-secret'),
-      ('2', 'mine', 'click', '{"path":"/mine"}', 'u2', 's2', 2, '2026-01-02', 'DE', 'resolved-mine');
+      ('2', 'mine', 'click', '{"path":"/mine"}', 'u2', 's2', 2, '2026-01-02', 'DE', 'resolved-mine'),
+      ('3', 'mine', 'old', '{"path":"/old"}', 'u2', 's3', 3, '2025-12-01', 'DE', 'resolved-old');
     INSERT INTO sessions VALUES
       ('s', 'u', 'secret', 1, 2, 1, '/secret', '/secret', 1, 1, '2026-01-01', 'resolved-secret'),
-      ('s2', 'u2', 'mine', 1, 2, 1, '/mine', '/mine', 1, 0, '2026-01-02', 'resolved-mine');
+      ('s2', 'u2', 'mine', 1, 2, 1, '/mine', '/mine', 1, 0, '2026-01-02', 'resolved-mine'),
+      ('s3', 'u2', 'mine', 3, 4, 1, '/old', '/old', 1, 1, '2025-12-01', 'resolved-old');
     INSERT INTO user_profiles VALUES ('secret', 'u', '{"email":"a@b.c"}');
   `);
   return db;
 }
 
+const TEST_WINDOW = { date_from: '2026-01-01', date_to: '2026-01-02' };
+
 function run(sql, projectName = 'mine') {
-  const wrapped = wrapProjectSql(sql, projectName);
+  const wrapped = wrapProjectSql(sql, projectName, TEST_WINDOW);
   return {
     wrapped,
     rows: database().prepare(wrapped.sql).all(...wrapped.params),
@@ -104,14 +109,25 @@ describe('validateReadOnlySql', () => {
     assert.match(rejected('SELECT id FROM events LIMIT -1'), /LIMIT/);
     assert.match(rejected('SELECT id FROM events LIMIT (SELECT 1)'), /LIMIT/);
   });
+
+  test('rejects a third events or sessions reference and a recursive CTE', () => {
+    assert.match(rejected('SELECT * FROM events a JOIN events b ON a.id = b.id JOIN sessions ON a.session_id = sessions.session_id'), /at most 2/);
+    assert.match(rejected('SELECT id FROM events, events, sessions'), /at most 2/);
+    assert.match(rejected('SELECT id FROM events WHERE EXISTS (SELECT 1 FROM events WHERE EXISTS (SELECT 1 FROM sessions))'), /at most 2/);
+    assert.match(rejected('WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 2) SELECT x FROM c'), /recursive|SELECT/);
+    assert.match(rejected('SELECT * FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 2) SELECT x FROM c)'), /recursive/);
+    assert.equal(validateReadOnlySql('SELECT * FROM events JOIN sessions ON events.session_id = sessions.session_id').ok, true);
+    assert.equal(validateReadOnlySql('SELECT * FROM events a JOIN events b ON a.id = b.id').ok, true);
+  });
 });
 
 describe('wrapProjectSql', () => {
   test('binds the project name twice and hides other projects and resolved_user_id', () => {
     const { wrapped, rows } = run("SELECT * FROM events WHERE event != 'DELETE'", "o'hare");
-    assert.deepEqual(wrapped.params, ["o'hare", "o'hare"]);
-    assert.match(wrapped.sql, /FROM main\.events WHERE project_id = \?/);
-    assert.match(wrapped.sql, /FROM main\.sessions WHERE project_id = \?/);
+    assert.deepEqual(wrapped.params, ["o'hare", '2026-01-01', '2026-01-02', "o'hare", '2026-01-01', '2026-01-02']);
+    assert.deepEqual(wrapped.window, TEST_WINDOW);
+    assert.match(wrapped.sql, /FROM main\.events WHERE project_id = \? AND date >= \? AND date <= \?/);
+    assert.match(wrapped.sql, /FROM main\.sessions WHERE project_id = \? AND date >= \? AND date <= \?/);
     assert.doesNotMatch(wrapped.sql, /resolved_user_id/);
     assert.equal(rows.length, 0);
 
@@ -153,6 +169,42 @@ describe('wrapProjectSql', () => {
 
     const trailing = wrapProjectSql('SELECT id FROM events;', 'mine');
     assert.match(trailing.sql, /LIMIT 1001;/);
+  });
+
+  test('omits rows outside the date window', () => {
+    const events = run('SELECT id, date FROM events ORDER BY date');
+    assert.deepEqual(events.rows, [{ id: '2', date: '2026-01-02' }]);
+    const sessions = run('SELECT session_id, date FROM sessions ORDER BY date');
+    assert.deepEqual(sessions.rows, [{ session_id: 's2', date: '2026-01-02' }]);
+  });
+
+  test('resolves days as an inclusive UTC window and rejects a span over 90 days', () => {
+    const now = new Date('2026-04-10T23:30:00.000Z');
+    assert.deepEqual(resolveSqlWindow(undefined, now), { date_from: '2026-04-04', date_to: '2026-04-10' });
+    assert.deepEqual(resolveSqlWindow({ days: 1 }, now), { date_from: '2026-04-10', date_to: '2026-04-10' });
+    assert.deepEqual(resolveSqlWindow({ days: 90 }, now), { date_from: '2026-01-11', date_to: '2026-04-10' });
+    assert.deepEqual(resolveSqlWindow({ date_from: '2026-01-01', date_to: '2026-03-31' }), {
+      date_from: '2026-01-01',
+      date_to: '2026-03-31',
+    });
+
+    for (const window of [
+      { days: 0 },
+      { days: 91 },
+      { days: 1.5 },
+      { days: '7' },
+      { date_from: '2026-04-02', date_to: '2026-04-01' },
+      { date_from: '2026-02-31', date_to: '2026-03-01' },
+      { date_from: '2026-01-01' },
+      { days: 7, date_from: '2026-01-01', date_to: '2026-01-02' },
+      { date_from: '2026-01-01', date_to: '2026-04-01' },
+    ]) {
+      assert.throws(
+        () => resolveSqlWindow(window, now),
+        (err) => err instanceof AnalyticsError && err.code === 'INVALID_WINDOW',
+        JSON.stringify(window),
+      );
+    }
   });
 
   test('a string that names another table does not expose that table', () => {

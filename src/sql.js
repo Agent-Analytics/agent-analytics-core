@@ -2,12 +2,18 @@
  * Read-only SQL parser and project CTE wrapper shared by hosted and OSS.
  *
  * validateReadOnlySql(sql) -> { ok: true } | { ok: false, error: string }
- * wrapProjectSql(sql, projectName) -> { sql, params, returnLimit, probeTruncation }
+ * resolveSqlWindow(window, now?) -> { date_from, date_to }
+ * wrapProjectSql(sql, projectName, window) -> { sql, params, returnLimit, probeTruncation, window }
  *
- * params is [projectName, projectName]: the events CTE filter, then the sessions CTE filter.
+ * params is [projectName, date_from, date_to, projectName, date_from, date_to].
  * The wrapper reads main.events and main.sessions. SQLite treats a CTE that selects
  * from its own name as a circular reference, so the base table has to be schema-qualified
  * inside the server wrapper. User SQL cannot use schema qualifiers.
+ *
+ * The window predicate is events.date and sessions.date. Those are the columns covered by
+ * idx_events_project_date (project_id, date) and idx_sessions_project_date (project_id, date).
+ * timestamp and start_time do not have a project-scoped range index, so they are not the
+ * window predicate.
  */
 
 import { AnalyticsError, ERROR_CODES } from './errors.js';
@@ -15,6 +21,10 @@ import { AnalyticsError, ERROR_CODES } from './errors.js';
 export const SQL_MAX_BYTES = 20 * 1024;
 export const SQL_ROW_CAP = 1000;
 export const SQL_FETCH_CAP = 1001;
+export const SQL_MAX_TABLE_REFS = 2;
+export const SQL_WINDOW_DEFAULT_DAYS = 7;
+export const SQL_WINDOW_MAX_DAYS = 90;
+const MS_PER_DAY = 86_400_000;
 
 export const READ_ONLY_SQL_COLUMNS = Object.freeze({
   events: Object.freeze([
@@ -335,6 +345,7 @@ function validateTokens(tokens) {
     }
     if (semis > 0) return fail('multiple statements are not allowed');
     if (token.type === 'param') return fail('bind parameters are not accepted');
+    if (token.upper === 'RECURSIVE') return fail('recursive CTE is not allowed');
     if (token.type === 'word' && FORBIDDEN_KEYWORDS.has(token.upper)) {
       return fail(`write keyword ${token.upper} is not allowed`);
     }
@@ -353,6 +364,9 @@ function validateTokens(tokens) {
 
   const collected = collectTableRefs(tokens);
   if (collected.error || collected.ok === false) return collected;
+  if (collected.tables.length > SQL_MAX_TABLE_REFS) {
+    return fail('at most 2 references to events or sessions are allowed');
+  }
   for (const table of collected.tables) {
     if (table.dotted || table.schema) return fail('schema-qualified names are not allowed');
     if (!ALLOWED_TABLES.has(table.name.upper)) {
@@ -449,21 +463,88 @@ export function validateReadOnlySql(sql) {
   return { ok: true };
 }
 
+function utcDate(now) {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+function addUtcDays(isoDate, days) {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function inclusiveDaySpan(dateFrom, dateTo) {
+  const start = Date.parse(`${dateFrom}T00:00:00.000Z`);
+  const end = Date.parse(`${dateTo}T00:00:00.000Z`);
+  return Math.round((end - start) / MS_PER_DAY) + 1;
+}
+
+function parseWindowDate(value) {
+  if (typeof value !== 'string' || !/^(\d{4})-(\d{2})-(\d{2})$/.test(value)) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    return null;
+  }
+  return value;
+}
+
+function windowError(message) {
+  throw new AnalyticsError(ERROR_CODES.INVALID_WINDOW, message, 400);
+}
+
+export function resolveSqlWindow(window, now = new Date()) {
+  if (window == null) {
+    const dateTo = utcDate(now);
+    return { date_from: addUtcDays(dateTo, -(SQL_WINDOW_DEFAULT_DAYS - 1)), date_to: dateTo };
+  }
+  if (typeof window !== 'object' || Array.isArray(window)) windowError('window must be an object');
+
+  const hasDays = Object.hasOwn(window, 'days');
+  const hasFrom = Object.hasOwn(window, 'date_from');
+  const hasTo = Object.hasOwn(window, 'date_to');
+  if (hasDays && (hasFrom || hasTo)) {
+    windowError('use days or date_from and date_to, not both');
+  }
+  if (!hasDays && !hasFrom && !hasTo) {
+    const dateTo = utcDate(now);
+    return { date_from: addUtcDays(dateTo, -(SQL_WINDOW_DEFAULT_DAYS - 1)), date_to: dateTo };
+  }
+  if (hasDays) {
+    if (typeof window.days !== 'number' || !Number.isInteger(window.days) || window.days < 1 || window.days > SQL_WINDOW_MAX_DAYS) {
+      windowError(`days must be an integer from 1 to ${SQL_WINDOW_MAX_DAYS}`);
+    }
+    const dateTo = utcDate(now);
+    return { date_from: addUtcDays(dateTo, -(window.days - 1)), date_to: dateTo };
+  }
+  if (!hasFrom || !hasTo) windowError('date_from and date_to are both required');
+
+  const dateFrom = parseWindowDate(window.date_from);
+  const dateTo = parseWindowDate(window.date_to);
+  if (!dateFrom || !dateTo) windowError('date_from and date_to must be YYYY-MM-DD');
+  if (dateFrom > dateTo) windowError('date_from must be on or before date_to');
+  if (inclusiveDaySpan(dateFrom, dateTo) > SQL_WINDOW_MAX_DAYS) {
+    windowError(`date span must be at most ${SQL_WINDOW_MAX_DAYS} days`);
+  }
+  return { date_from: dateFrom, date_to: dateTo };
+}
+
 function wrapCtes(userSql) {
   const events = READ_ONLY_SQL_COLUMNS.events.join(', ');
   const sessions = READ_ONLY_SQL_COLUMNS.sessions.join(', ');
   return `WITH events AS (
   SELECT ${events}
-  FROM main.events WHERE project_id = ?
+  FROM main.events WHERE project_id = ? AND date >= ? AND date <= ?
 ),
 sessions AS (
   SELECT ${sessions}
-  FROM main.sessions WHERE project_id = ?
+  FROM main.sessions WHERE project_id = ? AND date >= ? AND date <= ?
 )
 ${userSql}`;
 }
 
-export function wrapProjectSql(sql, projectName) {
+export function wrapProjectSql(sql, projectName, window) {
   const parsed = parseReadOnlySql(sql);
   if (!parsed.ok) {
     throw new AnalyticsError(ERROR_CODES.INVALID_SQL, parsed.error, 400);
@@ -471,14 +552,16 @@ export function wrapProjectSql(sql, projectName) {
   if (typeof projectName !== 'string' || projectName.length === 0) {
     throw new AnalyticsError(ERROR_CODES.PROJECT_REQUIRED, 'project name is required', 400);
   }
+  const resolvedWindow = resolveSqlWindow(window);
   const capped = applyRowCap(sql, parsed.tokens);
   if (!capped.ok) {
     throw new AnalyticsError(ERROR_CODES.INVALID_SQL, capped.error, 400);
   }
   return {
     sql: wrapCtes(capped.sql),
-    params: [projectName, projectName],
+    params: [projectName, resolvedWindow.date_from, resolvedWindow.date_to, projectName, resolvedWindow.date_from, resolvedWindow.date_to],
     returnLimit: capped.returnLimit,
     probeTruncation: capped.probeTruncation,
+    window: resolvedWindow,
   };
 }
