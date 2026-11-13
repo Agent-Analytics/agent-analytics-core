@@ -466,6 +466,7 @@ export async function eraseSubjectRows(db, {
   includeHostedIdentity = false,
   aliasScopeIds = [],
   emailLookups = [],
+  beforeDelete = null,
 } = {}) {
   requireProject(project);
   const counts = emptyErasureCounts();
@@ -475,6 +476,7 @@ export async function eraseSubjectRows(db, {
       throw new Error('session id is required');
     }
     const eventIds = await collectSessionEvents(db, project, sessionId);
+    if (beforeDelete) await beforeDelete({ userIds: [], sessionIds: [sessionId] });
     counts.events = await deleteByIds(
       db,
       'DELETE FROM events WHERE project_id = ?',
@@ -504,6 +506,10 @@ export async function eraseSubjectRows(db, {
     for (const sessionIdValue of await collectUserSessions(db, project, expanded, includeHostedIdentity)) {
       sessionIds.add(sessionIdValue);
     }
+  }
+
+  if (beforeDelete) {
+    await beforeDelete({ userIds: expanded, sessionIds: [...sessionIds] });
   }
 
   counts.events = await deleteByIds(
