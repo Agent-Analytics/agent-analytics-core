@@ -597,7 +597,7 @@ describe('BaseAdapter contract', () => {
     );
     await assert.rejects(
       () => adapter.query({ project: 'p', group_by: ['properties.bad-key'] }),
-      (err) => err.code === 'INVALID_PROPERTY_KEY',
+      (err) => err.code === 'INVALID_PROPERTY_KEY' && err.message === 'Invalid property group-by key',
     );
   });
 

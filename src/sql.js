@@ -226,9 +226,10 @@ function isName(token) {
   return token && (token.type === 'word' || token.type === 'quoted');
 }
 
-function collectTableRefs(tokens) {
+function collectTableRefs(tokens, ctes = new Set()) {
   const tables = [];
   let i = 0;
+  let scope = ctes;
 
   function peek() {
     return tokens[i];
@@ -259,7 +260,7 @@ function collectTableRefs(tokens) {
   function collectInsideParens() {
     const start = i + 1;
     if (!skipBalancedParens()) return fail('unterminated parenthesis');
-    const nested = collectTableRefs(tokens.slice(start, i - 1));
+    const nested = collectTableRefs(tokens.slice(start, i - 1), scope);
     if (nested.ok === false) return nested;
     tables.push(...nested.tables);
     return null;
@@ -297,22 +298,62 @@ function collectTableRefs(tokens) {
       return skipTableTail();
     }
 
+    if (!isName(token)) return fail('table reference is not allowed');
+    if (tokens[i + 1]?.text === '(') return fail('table-valued functions are not allowed');
+
     const first = readName();
-    if (!first) return fail('missing table name');
     if (peek()?.text === '.') {
       i += 1;
       const second = readName();
       if (!second) return fail('schema-qualified names are not allowed');
       tables.push({ schema: first, name: second, dotted: true });
-    } else {
-      tables.push({ schema: null, name: first, dotted: false });
+      return skipTableTail();
     }
+    if (scope.has(first.upper)) return skipTableTail();
+    if (!ALLOWED_TABLES.has(first.upper)) return fail(`table ${first.text} is not allowed`);
+    tables.push({ schema: null, name: first, dotted: false });
     return skipTableTail();
+  }
+
+  function parseWith() {
+    const local = new Set(scope);
+    while (i < tokens.length) {
+      const name = readName();
+      if (!name) return fail('missing CTE name');
+      if (peek()?.upper !== 'AS' || tokens[i + 1]?.text !== '(') return fail('invalid CTE');
+      i += 2;
+      const bodyStart = i;
+      let depth = 1;
+      while (i < tokens.length && depth > 0) {
+        if (tokens[i].text === '(') depth += 1;
+        else if (tokens[i].text === ')') depth -= 1;
+        if (depth > 0) i += 1;
+      }
+      if (depth !== 0) return fail('unterminated parenthesis');
+      const nested = collectTableRefs(tokens.slice(bodyStart, i), local);
+      i += 1;
+      if (nested.ok === false) return nested;
+      tables.push(...nested.tables);
+      local.add(name.upper);
+      if (peek()?.text === ',') {
+        i += 1;
+        continue;
+      }
+      break;
+    }
+    scope = local;
+    return null;
   }
 
   while (i < tokens.length) {
     const token = tokens[i];
-    if (token.upper === 'FROM' || token.upper === 'JOIN') {
+    if (token.upper === 'WITH') {
+      i += 1;
+      const error = parseWith();
+      if (error) return error;
+      continue;
+    }
+    if (token.upper === 'FROM' || token.upper === 'JOIN' || token.upper === 'IN') {
       const fromList = token.upper === 'FROM';
       i += 1;
       const error = parseTableFactor();
@@ -346,6 +387,9 @@ function validateTokens(tokens) {
     if (semis > 0) return fail('multiple statements are not allowed');
     if (token.type === 'param') return fail('bind parameters are not accepted');
     if (token.upper === 'RECURSIVE') return fail('recursive CTE is not allowed');
+    if (token.upper === 'RANDOMBLOB' || token.upper === 'ZEROBLOB') {
+      return fail(`${token.text.toLowerCase()} is not allowed`);
+    }
     if (token.type === 'word' && FORBIDDEN_KEYWORDS.has(token.upper)) {
       return fail(`write keyword ${token.upper} is not allowed`);
     }
@@ -364,8 +408,10 @@ function validateTokens(tokens) {
 
   const collected = collectTableRefs(tokens);
   if (collected.error || collected.ok === false) return collected;
-  if (collected.tables.length > SQL_MAX_TABLE_REFS) {
-    return fail('at most 2 references to events or sessions are allowed');
+  const events = collected.tables.filter((table) => table.name.upper === 'EVENTS').length;
+  const sessions = collected.tables.filter((table) => table.name.upper === 'SESSIONS').length;
+  if (events > 1 || sessions > 1) {
+    return fail('events and sessions may each be referenced only once');
   }
   for (const table of collected.tables) {
     if (table.dotted || table.schema) return fail('schema-qualified names are not allowed');
@@ -377,33 +423,40 @@ function validateTokens(tokens) {
   return { ok: true, tokens };
 }
 
-function parseInteger(tokens, index) {
-  const token = tokens[index];
-  if (!token) return null;
-  if (token.type === 'number') {
-    return { value: Number(token.text), token, end: index + 1 };
-  }
-  if (token.text === '(' && tokens[index + 1]?.type === 'number' && tokens[index + 2]?.text === ')') {
-    return { value: Number(tokens[index + 1].text), token: tokens[index + 1], end: index + 3 };
-  }
-  return null;
+const LIMIT_OPERATORS = new Set(['+', '-', '*', '/', '%', '|', '&', '.']);
+
+function plainNumber(token) {
+  if (!token || token.type !== 'number') return null;
+  const value = Number(token.text);
+  if (!Number.isSafeInteger(value) || value < 0) return null;
+  return { value, token };
 }
 
-function parseLimitClause(tokens, index) {
-  const countOrOffset = parseInteger(tokens, index + 1);
+function plainLimitAt(tokens, index) {
+  const countOrOffset = plainNumber(tokens[index + 1]);
   if (!countOrOffset) return null;
-  const next = tokens[countOrOffset.end];
-  if (next?.text === ',') {
-    const count = parseInteger(tokens, countOrOffset.end + 1);
-    if (!count) return null;
-    return { count: count.value, countToken: count.token };
+  let end = index + 2;
+  let count = countOrOffset;
+  if (tokens[end]?.text === ',') {
+    const second = plainNumber(tokens[end + 1]);
+    if (!second) return null;
+    count = second;
+    end += 2;
+  } else if (tokens[end]?.upper === 'OFFSET') {
+    const second = plainNumber(tokens[end + 1]);
+    if (!second) return null;
+    end += 2;
   }
-  if (next?.upper === 'OFFSET') {
-    const offset = parseInteger(tokens, countOrOffset.end + 1);
-    if (!offset) return null;
-    return { count: countOrOffset.value, countToken: countOrOffset.token };
+  if (LIMIT_OPERATORS.has(tokens[end]?.text)) return null;
+  return { count: count.value, countToken: count.token, end };
+}
+
+function rejectUnsafeLimits(tokens) {
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (tokens[i].upper !== 'LIMIT') continue;
+    if (!plainLimitAt(tokens, i)) return fail('LIMIT must be a plain non-negative integer');
   }
-  return { count: countOrOffset.value, countToken: countOrOffset.token };
+  return null;
 }
 
 function applyRowCap(sql, tokens) {
@@ -417,6 +470,9 @@ function applyRowCap(sql, tokens) {
   }
   if (limits.length > 1) return fail('multiple LIMIT clauses are not allowed');
 
+  const unsafe = rejectUnsafeLimits(tokens);
+  if (unsafe) return unsafe;
+
   if (limits.length === 0) {
     const semi = tokens.find((token) => token.text === ';');
     const at = semi ? semi.start : sql.length;
@@ -424,16 +480,14 @@ function applyRowCap(sql, tokens) {
     const tail = sql.slice(at);
     return {
       ok: true,
-      sql: `${head} LIMIT ${SQL_FETCH_CAP}${tail}`,
+      sql: `${head}\nLIMIT ${SQL_FETCH_CAP}${tail}`,
       returnLimit: SQL_ROW_CAP,
       probeTruncation: true,
     };
   }
 
-  const parsed = parseLimitClause(tokens, limits[0]);
-  if (!parsed || !Number.isSafeInteger(parsed.count) || parsed.count < 0) {
-    return fail('LIMIT must be a non-negative integer literal');
-  }
+  const parsed = plainLimitAt(tokens, limits[0]);
+  if (!parsed) return fail('LIMIT must be a plain non-negative integer');
   if (parsed.count <= SQL_ROW_CAP) {
     return { ok: true, sql, returnLimit: parsed.count, probeTruncation: false };
   }

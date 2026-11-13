@@ -110,14 +110,29 @@ describe('validateReadOnlySql', () => {
     assert.match(rejected('SELECT id FROM events LIMIT (SELECT 1)'), /LIMIT/);
   });
 
-  test('rejects a third events or sessions reference and a recursive CTE', () => {
-    assert.match(rejected('SELECT * FROM events a JOIN events b ON a.id = b.id JOIN sessions ON a.session_id = sessions.session_id'), /at most 2/);
-    assert.match(rejected('SELECT id FROM events, events, sessions'), /at most 2/);
-    assert.match(rejected('SELECT id FROM events WHERE EXISTS (SELECT 1 FROM events WHERE EXISTS (SELECT 1 FROM sessions))'), /at most 2/);
+  test('rejects a self-join, a recursive CTE, and blob functions', () => {
+    assert.match(rejected('SELECT * FROM events a JOIN events b ON a.id = b.id'), /only once/);
+    assert.match(rejected('SELECT * FROM events a JOIN events b ON a.id = b.id JOIN sessions ON a.session_id = sessions.session_id'), /only once/);
+    assert.match(rejected('SELECT id FROM events, events, sessions'), /only once/);
+    assert.match(rejected('SELECT id FROM events WHERE EXISTS (SELECT 1 FROM events)'), /only once/);
     assert.match(rejected('WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 2) SELECT x FROM c'), /recursive|SELECT/);
     assert.match(rejected('SELECT * FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 2) SELECT x FROM c)'), /recursive/);
+    assert.match(rejected('SELECT randomblob(1000000)'), /randomblob/);
+    assert.match(rejected('SELECT zeroblob(1000000)'), /zeroblob/);
+    assert.equal(validateReadOnlySql("SELECT id FROM events WHERE event != 'randomblob'").ok, true);
     assert.equal(validateReadOnlySql('SELECT * FROM events JOIN sessions ON events.session_id = sessions.session_id').ok, true);
-    assert.equal(validateReadOnlySql('SELECT * FROM events a JOIN events b ON a.id = b.id').ok, true);
+    assert.equal(validateReadOnlySql('SELECT id FROM (WITH p AS (SELECT id FROM events) SELECT id FROM p)').ok, true);
+  });
+
+  test('rejects IN against another table or a table-valued function', () => {
+    const ts = 1700000000000;
+    const tuple = `('b-secret','ub9','proj-b',${ts})`;
+    assert.match(rejected(`SELECT 'x' WHERE ${tuple} IN identity_map`), /identity_map/);
+    assert.match(rejected(`SELECT 'x' WHERE ${tuple} IN user_profiles`), /user_profiles/);
+    assert.match(rejected(`SELECT 'x' WHERE ${tuple} IN pragma_table_info('events')`), /table-valued/);
+    assert.match(rejected('SELECT * FROM json_each(properties)'), /table-valued/);
+    assert.equal(validateReadOnlySql("SELECT id FROM events WHERE event IN ('click', 'page')").ok, true);
+    assert.equal(validateReadOnlySql('SELECT id FROM events WHERE session_id IN (SELECT session_id FROM sessions)').ok, true);
   });
 });
 
@@ -169,6 +184,12 @@ describe('wrapProjectSql', () => {
 
     const trailing = wrapProjectSql('SELECT id FROM events;', 'mine');
     assert.match(trailing.sql, /LIMIT 1001;/);
+
+    const commented = wrapProjectSql('SELECT id FROM events -- c', 'mine', TEST_WINDOW);
+    assert.match(commented.sql, /-- c\nLIMIT 1001/);
+    assert.equal(database().prepare(commented.sql).all(...commented.params).length, 1);
+    assert.match(rejected('SELECT id FROM events LIMIT 1000+500'), /plain non-negative integer/);
+    assert.match(rejected('SELECT id FROM events LIMIT (1000)'), /plain non-negative integer/);
   });
 
   test('omits rows outside the date window', () => {

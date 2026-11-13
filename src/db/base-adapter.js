@@ -29,9 +29,10 @@ import {
 } from '../constants.js';
 import { buildPathsQueries, buildPathsResponse, validatePathsOptions } from '../path-analytics.js';
 
-export function validatePropertyKey(key) {
+export function validatePropertyKey(key, usage = 'filter') {
   if (!key || key.length > 128 || !/^[a-zA-Z0-9_]+$/.test(key)) {
-    throw new AnalyticsError(ERROR_CODES.INVALID_PROPERTY_KEY, 'Invalid property filter key', 400);
+    const kind = usage === 'group-by' ? 'group-by key' : 'filter key';
+    throw new AnalyticsError(ERROR_CODES.INVALID_PROPERTY_KEY, `Invalid property ${kind}`, 400);
   }
 }
 
@@ -55,7 +56,7 @@ export function assertQueryGroupBy(groupBy) {
   }
   for (const group of groupBy) {
     if (isPropertyGroupBy(group)) {
-      validatePropertyKey(group.slice(PROPERTY_GROUP_PREFIX.length));
+      validatePropertyKey(group.slice(PROPERTY_GROUP_PREFIX.length), 'group-by');
       continue;
     }
     if (!ALLOWED_GROUP_BY.includes(group)) {
