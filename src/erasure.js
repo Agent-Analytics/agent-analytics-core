@@ -6,6 +6,9 @@
  * and project_identity_scopes. Pass includeHostedIdentity for that schema.
  * Every statement binds the project name. The identity graph is walked once
  * from the seed ids, not followed into a second hop.
+ * User mode deletes events by that id set. A session row is deleted only when
+ * every event in it belongs to the set. A shared session stays.
+ * Deletes are set based (user_id IN / session_id IN), not one call per event.
  *
  * Stable exports (also re-exported from the package root and ./erasure):
  *   ERASURE_BATCH_SIZE
@@ -160,43 +163,37 @@ export async function collectIdentityGraph(db, {
   return [...expanded];
 }
 
+function insideSql(includeHostedIdentity, marks) {
+  const resolved = includeHostedIdentity ? ` OR resolved_user_id IN (${marks})` : '';
+  return `(user_id IN (${marks})${resolved})`;
+}
+
+function outsideSql(includeHostedIdentity, marks) {
+  const resolved = includeHostedIdentity
+    ? ` OR (resolved_user_id IS NOT NULL AND resolved_user_id NOT IN (${marks}))`
+    : '';
+  return `(user_id IS NULL OR user_id NOT IN (${marks})${resolved})`;
+}
+
+function idListParams(batch, includeHostedIdentity) {
+  return includeHostedIdentity ? [...batch, ...batch] : [...batch];
+}
+
 async function countUserEvents(db, project, userIds, includeHostedIdentity) {
   const ids = uniqueStrings(userIds);
   if (ids.length === 0) return 0;
-  if (ids.length <= PREDICATE_BATCH) {
-    const marks = placeholders(ids.length);
-    const resolved = includeHostedIdentity ? ` OR resolved_user_id IN (${marks})` : '';
-    const params = includeHostedIdentity ? [project, ...ids, ...ids] : [project, ...ids];
+  let total = 0;
+  const size = includeHostedIdentity ? PREDICATE_BATCH : ERASURE_BATCH_SIZE;
+  for (const batch of batches(ids, size)) {
+    const marks = placeholders(batch.length);
     const row = await db.queryOne(
       `SELECT COUNT(*) AS n FROM events
-        WHERE project_id = ? AND (user_id IN (${marks})${resolved})`,
-      params,
+        WHERE project_id = ? AND ${insideSql(includeHostedIdentity, marks)}`,
+      [project, ...idListParams(batch, includeHostedIdentity)],
     );
-    return Number(row?.n) || 0;
+    total += Number(row?.n) || 0;
   }
-
-  const eventIds = new Set();
-  for (const batch of batches(ids, PREDICATE_BATCH)) {
-    const marks = placeholders(batch.length);
-    const resolved = includeHostedIdentity ? ` OR resolved_user_id IN (${marks})` : '';
-    const params = includeHostedIdentity
-      ? [project, ...batch, ...batch]
-      : [project, ...batch];
-    let lastId = '';
-    for (;;) {
-      const rows = await db.queryAll(
-        `SELECT id FROM events
-          WHERE project_id = ? AND id > ? AND (user_id IN (${marks})${resolved})
-          ORDER BY id
-          LIMIT ${PAGE_SIZE}`,
-        [project, lastId, ...params.slice(1)],
-      );
-      for (const row of rows) eventIds.add(row.id);
-      if (rows.length < PAGE_SIZE) break;
-      lastId = rows[rows.length - 1].id;
-    }
-  }
-  return eventIds.size;
+  return total;
 }
 
 export async function countSubjectEvents(db, {
@@ -227,84 +224,83 @@ export async function userIdsForEmailLookup(db, { project, scopeId, lookupIndex 
   return uniqueStrings(rows.map((row) => row.user_id));
 }
 
-async function collectUserEvents(db, project, userIds, includeHostedIdentity) {
-  const eventIds = new Set();
-  const sessionIds = new Set();
-  for (const batch of batches(userIds, PREDICATE_BATCH)) {
+async function classifyTouchedSessions(db, project, userIds, includeHostedIdentity) {
+  const exclusive = new Set();
+  const shared = new Set();
+  const repeats = includeHostedIdentity ? 4 : 2;
+  const size = Math.max(1, Math.min(PREDICATE_BATCH, Math.floor(90 / repeats)));
+  for (const batch of batches(userIds, size)) {
     const marks = placeholders(batch.length);
-    const resolved = includeHostedIdentity ? ` OR resolved_user_id IN (${marks})` : '';
-    let lastId = '';
-    for (;;) {
-      const rows = await db.queryAll(
-        `SELECT id, session_id FROM events
-          WHERE project_id = ? AND id > ?
-            AND (user_id IN (${marks})${resolved})
-          ORDER BY id
-          LIMIT ${PAGE_SIZE}`,
-        [project, lastId, ...batch, ...(includeHostedIdentity ? batch : [])],
-      );
-      for (const row of rows) {
-        eventIds.add(row.id);
-        if (row.session_id) sessionIds.add(row.session_id);
-      }
-      if (rows.length < PAGE_SIZE) break;
-      lastId = rows[rows.length - 1].id;
-    }
-  }
-  return { eventIds, sessionIds };
-}
-
-async function collectSessionEvents(db, project, sessionId) {
-  const eventIds = [];
-  let lastId = '';
-  for (;;) {
     const rows = await db.queryAll(
-      `SELECT id FROM events
-        WHERE project_id = ? AND id > ? AND session_id = ?
-        ORDER BY id
-        LIMIT ${PAGE_SIZE}`,
-      [project, lastId, sessionId],
+      `SELECT session_id,
+              SUM(CASE WHEN ${outsideSql(includeHostedIdentity, marks)} THEN 1 ELSE 0 END) AS outside_events
+         FROM events
+        WHERE project_id = ? AND session_id IS NOT NULL
+        GROUP BY session_id
+       HAVING SUM(CASE WHEN ${insideSql(includeHostedIdentity, marks)} THEN 1 ELSE 0 END) > 0`,
+      [
+        ...idListParams(batch, includeHostedIdentity),
+        project,
+        ...idListParams(batch, includeHostedIdentity),
+      ],
     );
-    for (const row of rows) eventIds.push(row.id);
-    if (rows.length < PAGE_SIZE) break;
-    lastId = rows[rows.length - 1].id;
-  }
-  return eventIds;
-}
-
-async function collectUserSessions(db, project, userIds, includeHostedIdentity) {
-  const sessionIds = new Set();
-  for (const batch of batches(userIds, PREDICATE_BATCH)) {
-    const marks = placeholders(batch.length);
-    const resolved = includeHostedIdentity ? ` OR resolved_user_id IN (${marks})` : '';
-    let lastId = '';
-    for (;;) {
-      const rows = await db.queryAll(
-        `SELECT session_id FROM sessions
-          WHERE project_id = ? AND session_id > ?
-            AND (user_id IN (${marks})${resolved})
-          ORDER BY session_id
-          LIMIT ${PAGE_SIZE}`,
-        [project, lastId, ...batch, ...(includeHostedIdentity ? batch : [])],
-      );
-      for (const row of rows) sessionIds.add(row.session_id);
-      if (rows.length < PAGE_SIZE) break;
-      lastId = rows[rows.length - 1].session_id;
+    for (const row of rows) {
+      if (Number(row.outside_events) > 0) shared.add(row.session_id);
+      else exclusive.add(row.session_id);
     }
   }
-  return sessionIds;
+  return { exclusive, shared };
 }
 
-async function deleteByIds(db, sqlPrefix, project, ids) {
-  let deleted = 0;
-  for (const batch of batches(ids, ERASURE_BATCH_SIZE)) {
-    const result = await db.run(
-      `${sqlPrefix} AND id IN (${placeholders(batch.length)})`,
-      [project, ...batch],
+async function exclusiveSessionRows(db, project, userIds, includeHostedIdentity) {
+  const found = new Set();
+  const repeats = includeHostedIdentity ? 4 : 2;
+  const size = Math.max(1, Math.min(PREDICATE_BATCH, Math.floor(90 / repeats)));
+  for (const batch of batches(userIds, size)) {
+    const marks = placeholders(batch.length);
+    const resolvedOwner = includeHostedIdentity ? ` OR resolved_user_id IN (${marks})` : '';
+    const rows = await db.queryAll(
+      `SELECT session_id FROM sessions
+        WHERE project_id = ?
+          AND (user_id IN (${marks})${resolvedOwner})
+          AND NOT EXISTS (
+            SELECT 1 FROM events
+             WHERE events.project_id = sessions.project_id
+               AND events.session_id = sessions.session_id
+               AND ${outsideSql(includeHostedIdentity, marks)}
+          )`,
+      [
+        project,
+        ...idListParams(batch, includeHostedIdentity),
+        ...idListParams(batch, includeHostedIdentity),
+      ],
     );
-    deleted += changeCount(result, batch.length);
+    for (const row of rows) found.add(row.session_id);
+  }
+  return found;
+}
+
+async function deleteEventsForUsers(db, project, userIds, includeHostedIdentity) {
+  let deleted = 0;
+  const size = includeHostedIdentity ? PREDICATE_BATCH : ERASURE_BATCH_SIZE;
+  for (const batch of batches(userIds, size)) {
+    const marks = placeholders(batch.length);
+    const result = await db.run(
+      `DELETE FROM events
+        WHERE project_id = ? AND ${insideSql(includeHostedIdentity, marks)}`,
+      [project, ...idListParams(batch, includeHostedIdentity)],
+    );
+    deleted += changeCount(result, 0);
   }
   return deleted;
+}
+
+async function deleteEventsForSession(db, project, sessionId) {
+  const result = await db.run(
+    'DELETE FROM events WHERE project_id = ? AND session_id = ?',
+    [project, sessionId],
+  );
+  return changeCount(result, 0);
 }
 
 async function deleteSessions(db, project, sessionIds) {
@@ -321,71 +317,29 @@ async function deleteSessions(db, project, sessionIds) {
 }
 
 async function deleteIdentityMap(db, project, userIds) {
-  const previousIds = new Set();
+  let deleted = 0;
   for (const batch of batches(userIds, PREDICATE_BATCH)) {
     const marks = placeholders(batch.length);
-    let lastId = '';
-    for (;;) {
-      const rows = await db.queryAll(
-        `SELECT previous_id FROM identity_map
-          WHERE project_id = ? AND previous_id > ?
-            AND (previous_id IN (${marks}) OR canonical_id IN (${marks}))
-          ORDER BY previous_id
-          LIMIT ${PAGE_SIZE}`,
-        [project, lastId, ...batch, ...batch],
-      );
-      for (const row of rows) previousIds.add(row.previous_id);
-      if (rows.length < PAGE_SIZE) break;
-      lastId = rows[rows.length - 1].previous_id;
-    }
-  }
-
-  let deleted = 0;
-  for (const batch of batches([...previousIds], ERASURE_BATCH_SIZE)) {
     const result = await db.run(
       `DELETE FROM identity_map
-        WHERE project_id = ? AND previous_id IN (${placeholders(batch.length)})`,
-      [project, ...batch],
+        WHERE project_id = ?
+          AND (previous_id IN (${marks}) OR canonical_id IN (${marks}))`,
+      [project, ...batch, ...batch],
     );
-    deleted += changeCount(result, batch.length);
+    deleted += changeCount(result, 0);
   }
   return deleted;
 }
 
 async function deleteAliases(db, project, scopeId, userIds) {
-  const aliasIds = new Set();
+  let deleted = 0;
   const projectScope = `project:${project}`;
   for (const batch of batches(userIds, PREDICATE_BATCH)) {
     const marks = placeholders(batch.length);
-    let lastId = '';
-    for (;;) {
-      const rows = await db.queryAll(
-        `SELECT alias_id FROM identity_aliases
-          WHERE scope_id = ? AND alias_id > ?
-            AND (alias_id IN (${marks}) OR canonical_id IN (${marks}))
-            AND (
-              scope_id = ?
-              OR EXISTS (
-                SELECT 1 FROM project_identity_scopes
-                 WHERE project_id = ?
-                   AND scope_id = identity_aliases.scope_id
-              )
-            )
-          ORDER BY alias_id
-          LIMIT ${PAGE_SIZE}`,
-        [scopeId, lastId, ...batch, ...batch, projectScope, project],
-      );
-      for (const row of rows) aliasIds.add(row.alias_id);
-      if (rows.length < PAGE_SIZE) break;
-      lastId = rows[rows.length - 1].alias_id;
-    }
-  }
-
-  let deleted = 0;
-  for (const batch of batches([...aliasIds], ERASURE_BATCH_SIZE)) {
     const result = await db.run(
       `DELETE FROM identity_aliases
-        WHERE scope_id = ? AND alias_id IN (${placeholders(batch.length)})
+        WHERE scope_id = ?
+          AND (alias_id IN (${marks}) OR canonical_id IN (${marks}))
           AND (
             scope_id = ?
             OR EXISTS (
@@ -394,9 +348,9 @@ async function deleteAliases(db, project, scopeId, userIds) {
                  AND scope_id = identity_aliases.scope_id
             )
           )`,
-      [scopeId, ...batch, projectScope, project],
+      [scopeId, ...batch, ...batch, projectScope, project],
     );
-    deleted += changeCount(result, batch.length);
+    deleted += changeCount(result, 0);
   }
   return deleted;
 }
@@ -423,47 +377,106 @@ function normalizeEmailLookup(lookup) {
 }
 
 async function deleteEmailLookups(db, project, userIds, emailLookups) {
-  const keys = new Map();
-  const remember = (row) => {
-    if (!row?.scope_id || !row?.user_id) return;
-    keys.set(`${row.scope_id}\n${row.user_id}`, row);
-  };
-
+  let deleted = 0;
   for (const batch of batches(userIds, ERASURE_BATCH_SIZE)) {
-    const rows = await db.queryAll(
-      `SELECT scope_id, user_id FROM email_lookup_index
+    const result = await db.run(
+      `DELETE FROM email_lookup_index
         WHERE project_id = ? AND user_id IN (${placeholders(batch.length)})`,
       [project, ...batch],
     );
-    for (const row of rows) remember(row);
+    deleted += changeCount(result, 0);
   }
-
   for (const lookup of (emailLookups || []).map(normalizeEmailLookup).filter(Boolean)) {
-    const rows = await db.queryAll(
-      `SELECT scope_id, user_id FROM email_lookup_index
+    const result = await db.run(
+      `DELETE FROM email_lookup_index
         WHERE project_id = ? AND scope_id = ? AND lookup_index = ?`,
       [project, lookup.scopeId, lookup.lookupIndex],
     );
-    for (const row of rows) remember(row);
-  }
-
-  let deleted = 0;
-  for (const row of keys.values()) {
-    const result = await db.run(
-      `DELETE FROM email_lookup_index
-        WHERE project_id = ? AND scope_id = ? AND user_id = ?`,
-      [project, row.scope_id, row.user_id],
-    );
-    deleted += changeCount(result, 1);
+    deleted += changeCount(result, 0);
   }
   return deleted;
 }
 
+async function recomputeSharedSessions(db, project, userIds, sharedIds, includeHostedIdentity) {
+  if (userIds.length === 0) return;
+  const sessionList = uniqueStrings(sharedIds);
+  const sessionBatches = sessionList.length > 0 ? batches(sessionList, 40) : [[]];
+  for (const idBatch of batches(userIds, includeHostedIdentity ? 8 : 12)) {
+    for (const sessionBatch of sessionBatches) {
+      const idMarks = placeholders(idBatch.length);
+      const resolvedSet = includeHostedIdentity
+        ? `, resolved_user_id = CASE
+              WHEN resolved_user_id IN (${idMarks}) THEN (
+                SELECT resolved_user_id FROM events
+                 WHERE project_id = sessions.project_id
+                   AND session_id = sessions.session_id
+                   AND resolved_user_id IS NOT NULL
+                   AND resolved_user_id NOT IN (${idMarks})
+                 LIMIT 1
+              )
+              ELSE resolved_user_id
+            END`
+        : '';
+      const resolvedWhere = includeHostedIdentity ? ` OR resolved_user_id IN (${idMarks})` : '';
+      const sessionClause = sessionBatch.length > 0
+        ? ` OR session_id IN (${placeholders(sessionBatch.length)})`
+        : '';
+      const params = [...idBatch, ...idBatch];
+      if (includeHostedIdentity) params.push(...idBatch, ...idBatch);
+      params.push(project, ...idBatch);
+      if (includeHostedIdentity) params.push(...idBatch);
+      if (sessionBatch.length > 0) params.push(...sessionBatch);
+      await db.run(
+        `UPDATE sessions
+            SET event_count = (
+                  SELECT COUNT(*) FROM events
+                   WHERE project_id = sessions.project_id AND session_id = sessions.session_id
+                ),
+                start_time = COALESCE((
+                  SELECT MIN(timestamp) FROM events
+                   WHERE project_id = sessions.project_id AND session_id = sessions.session_id
+                ), start_time),
+                end_time = COALESCE((
+                  SELECT MAX(timestamp) FROM events
+                   WHERE project_id = sessions.project_id AND session_id = sessions.session_id
+                ), end_time),
+                duration = COALESCE((
+                  SELECT MAX(timestamp) - MIN(timestamp) FROM events
+                   WHERE project_id = sessions.project_id AND session_id = sessions.session_id
+                ), 0),
+                is_bounce = CASE WHEN (
+                  SELECT COUNT(*) FROM events
+                   WHERE project_id = sessions.project_id AND session_id = sessions.session_id
+                ) > 1 THEN 0 ELSE 1 END,
+                user_id = CASE
+                  WHEN user_id IN (${idMarks}) THEN (
+                    SELECT user_id FROM events
+                     WHERE project_id = sessions.project_id
+                       AND session_id = sessions.session_id
+                       AND user_id IS NOT NULL
+                       AND user_id NOT IN (${idMarks})
+                     LIMIT 1
+                  )
+                  ELSE user_id
+                END
+                ${resolvedSet}
+          WHERE project_id = ?
+            AND (
+              user_id IN (${idMarks})${resolvedWhere}${sessionClause}
+            )`,
+        params,
+      );
+    }
+  }
+}
+
 /**
  * Delete rows for a user-id set or one session id.
- * mode 'user_ids' walks the identity graph once. mode 'session_id' does not.
- * Returns counts plus the ids the caller may hash into tombstones. Callers
- * must not log those ids.
+ * mode 'user_ids' walks the identity graph once unless expandGraph is false.
+ * mode 'session_id' does not walk.
+ * In user mode, sessionIds are the sessions whose every event belongs to the
+ * id set. Shared sessions are kept and are not returned for tombstones.
+ * Callers must not log the returned ids.
  */
 export async function eraseSubjectRows(db, {
   project,
@@ -474,6 +487,7 @@ export async function eraseSubjectRows(db, {
   aliasScopeIds = [],
   emailLookups = [],
   beforeDelete = null,
+  expandGraph = true,
 } = {}) {
   requireProject(project);
   const counts = emptyErasureCounts();
@@ -482,14 +496,8 @@ export async function eraseSubjectRows(db, {
     if (typeof sessionId !== 'string' || sessionId.length === 0) {
       throw new Error('session id is required');
     }
-    const eventIds = await collectSessionEvents(db, project, sessionId);
     if (beforeDelete) await beforeDelete({ userIds: [], sessionIds: [sessionId] });
-    counts.events = await deleteByIds(
-      db,
-      'DELETE FROM events WHERE project_id = ?',
-      project,
-      eventIds,
-    );
+    counts.events = await deleteEventsForSession(db, project, sessionId);
     counts.sessions = await deleteSessions(db, project, [sessionId]);
     return { counts, userIds: [], sessionIds: [sessionId] };
   }
@@ -499,34 +507,34 @@ export async function eraseSubjectRows(db, {
   const seeds = uniqueStrings(userIds);
   const expanded = seeds.length === 0
     ? []
-    : await collectIdentityGraph(db, {
-      project,
-      seedIds: seeds,
-      includeHostedIdentity,
-      aliasScopeIds,
-    });
+    : expandGraph
+      ? await collectIdentityGraph(db, {
+        project,
+        seedIds: seeds,
+        includeHostedIdentity,
+        aliasScopeIds,
+      })
+      : seeds;
 
-  const { eventIds, sessionIds } = expanded.length === 0
-    ? { eventIds: new Set(), sessionIds: new Set() }
-    : await collectUserEvents(db, project, expanded, includeHostedIdentity);
+  let exclusiveIds = [];
+  let sharedIds = [];
   if (expanded.length > 0) {
-    for (const sessionIdValue of await collectUserSessions(db, project, expanded, includeHostedIdentity)) {
-      sessionIds.add(sessionIdValue);
-    }
+    const classified = await classifyTouchedSessions(db, project, expanded, includeHostedIdentity);
+    const fromRows = await exclusiveSessionRows(db, project, expanded, includeHostedIdentity);
+    const exclusive = new Set([...classified.exclusive, ...fromRows]);
+    for (const id of classified.shared) exclusive.delete(id);
+    exclusiveIds = [...exclusive];
+    sharedIds = [...classified.shared];
   }
 
   if (beforeDelete) {
-    await beforeDelete({ userIds: expanded, sessionIds: [...sessionIds] });
+    await beforeDelete({ userIds: expanded, sessionIds: exclusiveIds });
   }
 
-  counts.events = await deleteByIds(
-    db,
-    'DELETE FROM events WHERE project_id = ?',
-    project,
-    [...eventIds],
-  );
-  counts.sessions = await deleteSessions(db, project, sessionIds);
   if (expanded.length > 0) {
+    counts.events = await deleteEventsForUsers(db, project, expanded, includeHostedIdentity);
+    counts.sessions = await deleteSessions(db, project, exclusiveIds);
+    await recomputeSharedSessions(db, project, expanded, sharedIds, includeHostedIdentity);
     counts.identity_rows += await deleteIdentityMap(db, project, expanded);
   }
   if (includeHostedIdentity) {
@@ -540,7 +548,7 @@ export async function eraseSubjectRows(db, {
     counts.email_lookups = await deleteEmailLookups(db, project, expanded, emailLookups);
   }
 
-  return { counts, userIds: expanded, sessionIds: [...sessionIds] };
+  return { counts, userIds: expanded, sessionIds: exclusiveIds };
 }
 
 async function rememberHashed(set, hashes, value) {
@@ -637,22 +645,44 @@ function addCounts(target, extra) {
 }
 
 /**
- * Re-apply a receipt that stores hashes, not raw subjects. Scans one project,
- * then deletes by primary key. The returned object is counts only.
+ * Re-apply a receipt that stores hashes, not raw subjects.
+ * User and email receipts delete by the user id set only.
+ * Session receipts delete that session only.
+ * The returned object is counts only.
  */
 export async function reapplyErasureReceipt(db, receipt, { includeHostedIdentity = false } = {}) {
   const project = receipt?.project_name;
   requireProject(project);
-  const found = await scanMatchingIds(db, {
-    project,
-    userHashes: new Set(receipt.user_id_hashes || []),
-    sessionHashes: new Set(receipt.session_id_hashes || []),
-    includeHostedIdentity,
-  });
   const counts = emptyErasureCounts();
   const lookups = (Array.isArray(receipt.email_lookups) ? receipt.email_lookups : [])
     .map(normalizeEmailLookup)
     .filter(Boolean);
+
+  if (receipt?.subject_type === 'session_id') {
+    const found = await scanMatchingIds(db, {
+      project,
+      userHashes: new Set(),
+      sessionHashes: new Set(receipt.session_id_hashes || []),
+      includeHostedIdentity,
+    });
+    for (const sessionId of found.sessionIds) {
+      const erased = await eraseSubjectRows(db, {
+        project,
+        mode: 'session_id',
+        sessionId,
+        includeHostedIdentity,
+      });
+      addCounts(counts, erased.counts);
+    }
+    return { counts };
+  }
+
+  const found = await scanMatchingIds(db, {
+    project,
+    userHashes: new Set(receipt.user_id_hashes || []),
+    sessionHashes: new Set(),
+    includeHostedIdentity,
+  });
   if (found.userIds.length > 0 || lookups.length > 0) {
     const erased = await eraseSubjectRows(db, {
       project,
@@ -660,14 +690,7 @@ export async function reapplyErasureReceipt(db, receipt, { includeHostedIdentity
       userIds: found.userIds,
       includeHostedIdentity,
       emailLookups: lookups,
-    });
-    addCounts(counts, erased.counts);
-  }
-  for (const sessionId of found.sessionIds) {
-    const erased = await eraseSubjectRows(db, {
-      project,
-      mode: 'session_id',
-      sessionId,
+      expandGraph: false,
     });
     addCounts(counts, erased.counts);
   }

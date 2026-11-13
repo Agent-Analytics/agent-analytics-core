@@ -332,6 +332,142 @@ describe('eraseSubjectRows', () => {
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM identity_map WHERE project_id = 'site-b'").get().n, 1);
   });
 
+  test('a shared session stays, and reapply matches the live delete', async () => {
+    function seed(sqlite) {
+      for (let index = 0; index < 11; index += 1) {
+        insertEvent(sqlite, {
+          id: `shared-${index}`,
+          project: 'site-a',
+          user_id: 'alice',
+          session_id: 's-shared',
+        });
+      }
+      insertEvent(sqlite, { id: 'bob-event', project: 'site-a', user_id: 'bob', session_id: 's-shared' });
+      insertEvent(sqlite, { id: 'alice-only', project: 'site-a', user_id: 'alice', session_id: 's-alice' });
+      insertSession(sqlite, { session_id: 's-shared', project: 'site-a', user_id: 'alice' });
+      insertSession(sqlite, { session_id: 's-alice', project: 'site-a', user_id: 'alice' });
+    }
+
+    const liveDb = open(false);
+    seed(liveDb);
+    const live = await eraseSubjectRows(adapter(liveDb), {
+      project: 'site-a',
+      mode: 'user_ids',
+      userIds: ['alice'],
+    });
+    assert.equal(live.counts.events, 12);
+    assert.equal(live.counts.sessions, 1);
+    assert.equal(live.sessionIds.includes('s-shared'), false);
+    assert.equal(live.sessionIds.includes('s-alice'), true);
+    assert.equal(liveDb.prepare("SELECT id FROM events WHERE id = 'bob-event'").get().id, 'bob-event');
+    assert.equal(liveDb.prepare("SELECT user_id, event_count FROM sessions WHERE session_id = 's-shared'").get().user_id, 'bob');
+    assert.equal(liveDb.prepare("SELECT event_count FROM sessions WHERE session_id = 's-shared'").get().event_count, 1);
+    assert.equal(liveDb.prepare("SELECT COUNT(*) AS n FROM sessions WHERE session_id = 's-alice'").get().n, 0);
+
+    const restored = open(false);
+    seed(restored);
+    const receipt = {
+      project_name: 'site-a',
+      subject_type: 'user_id',
+      user_id_hashes: await Promise.all(live.userIds.map((id) => hashErasureSubject(id))),
+      session_id_hashes: [
+        await hashErasureSubject('s-shared'),
+        await hashErasureSubject('s-alice'),
+      ],
+      email_lookups: [],
+    };
+    const again = await reapplyErasureReceipt(adapter(restored), receipt);
+    assert.equal(again.counts.events, live.counts.events);
+    assert.equal(again.counts.sessions, live.counts.sessions);
+    assert.equal(restored.prepare("SELECT id FROM events WHERE id = 'bob-event'").get().id, 'bob-event');
+    assert.equal(restored.prepare("SELECT COUNT(*) AS n FROM sessions WHERE session_id = 's-shared'").get().n, 1);
+    assert.equal(restored.prepare("SELECT COUNT(*) AS n FROM events WHERE user_id = 'alice'").get().n, 0);
+
+    const sessionDb = open(false);
+    seed(sessionDb);
+    const sessionLive = await eraseSubjectRows(adapter(sessionDb), {
+      project: 'site-a',
+      mode: 'session_id',
+      sessionId: 's-shared',
+    });
+    const sessionRestored = open(false);
+    seed(sessionRestored);
+    const sessionAgain = await reapplyErasureReceipt(adapter(sessionRestored), {
+      project_name: 'site-a',
+      subject_type: 'session_id',
+      user_id_hashes: [await hashErasureSubject('alice')],
+      session_id_hashes: [await hashErasureSubject('s-shared')],
+      email_lookups: [],
+    });
+    assert.equal(sessionAgain.counts.events, sessionLive.counts.events);
+    assert.equal(sessionAgain.counts.sessions, sessionLive.counts.sessions);
+    assert.equal(sessionRestored.prepare("SELECT COUNT(*) AS n FROM events WHERE session_id = 's-shared'").get().n, 0);
+    assert.equal(sessionRestored.prepare("SELECT id FROM events WHERE id = 'alice-only'").get().id, 'alice-only');
+  });
+
+  test('set based deletes stay within the D1 call budget', async () => {
+    function counting(sqlite) {
+      const db = adapter(sqlite);
+      const stats = { calls: 0 };
+      return {
+        stats,
+        db: {
+          async queryAll(...args) {
+            stats.calls += 1;
+            return db.queryAll(...args);
+          },
+          async queryOne(...args) {
+            stats.calls += 1;
+            return db.queryOne(...args);
+          },
+          async run(...args) {
+            stats.calls += 1;
+            return db.run(...args);
+          },
+        },
+      };
+    }
+
+    const smallSql = open(true);
+    insertEvent(smallSql, {
+      id: 'one',
+      project: 'site-a',
+      user_id: 'known-user',
+      resolved_user_id: 'known-user',
+      session_id: 'sess-one',
+    });
+    insertSession(smallSql, {
+      session_id: 'sess-one',
+      project: 'site-a',
+      user_id: 'known-user',
+      resolved_user_id: 'known-user',
+    });
+    const small = counting(smallSql);
+    await eraseSubjectRows(small.db, {
+      project: 'site-a',
+      userIds: ['known-user'],
+      includeHostedIdentity: true,
+    });
+    assert.ok(small.stats.calls <= 16, `normal erasure used ${small.stats.calls} calls`);
+
+    const largeSql = open(false);
+    const insert = largeSql.prepare(
+      `INSERT INTO events (id, project_id, event, properties, user_id, session_id, timestamp, date, country)
+       VALUES (?, 'site-a', 'page', NULL, 'known-user', NULL, 1, '2026-11-13', NULL)`,
+    );
+    largeSql.transaction(() => {
+      for (let index = 0; index < 100_000; index += 1) insert.run(`bulk-${index}`);
+    })();
+    const large = counting(largeSql);
+    const erased = await eraseSubjectRows(large.db, {
+      project: 'site-a',
+      userIds: ['known-user'],
+    });
+    assert.equal(erased.counts.events, 100_000);
+    assert.ok(large.stats.calls <= 30, `100k erasure used ${large.stats.calls} calls`);
+    console.log(`erasure calls normal=${small.stats.calls} events100k=${large.stats.calls}`);
+  });
+
   test('email lookup ids are limited to the project and scope', async () => {
     const sqlite = open(true);
     const db = adapter(sqlite);
