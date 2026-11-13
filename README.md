@@ -64,6 +64,19 @@ The handler returns a standard `Response`. Write operations are deferred so you 
 
 Initialize your database with the included `schema.sql`.
 
+## Read-only SQL and property group-by
+
+`POST /query` group_by accepts the existing fields plus one `properties.<key>`. The key uses `validatePropertyKey` (`^[A-Za-z0-9_]{1,128}$`). Two `properties.*` entries throw `INVALID_GROUP_BY`. Result rows use the key `properties.<key>`. Missing values group as null.
+
+`validateReadOnlySql(sql)` returns `{ ok: true }` or `{ ok: false, error }`. It accepts one `SELECT` up to 20 KB. It rejects a leading `WITH`, extra statements, bind parameters, write keywords outside string literals (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `ALTER`, `DROP`, `CREATE`, `ATTACH`, `DETACH`, `PRAGMA`, `VACUUM`, `REINDEX`), schema-qualified names (`main`, `temp`, quoted forms, and comments that split the dot), `sqlite_master`, `sqlite_schema`, `sqlite_temp_master`, `sqlite_temp_schema`, and any table other than `events` and `sessions`.
+
+`wrapProjectSql(sql, projectName)` returns `{ sql, params, returnLimit, probeTruncation }`. `params` is `[projectName, projectName]` for the events filter and then the sessions filter. The wrapper CTEs are:
+
+- `events(id, event, properties, user_id, session_id, timestamp, date, country)`
+- `sessions(session_id, user_id, project_id, start_time, end_time, duration, entry_page, exit_page, event_count, is_bounce, date)`
+
+`resolved_user_id` is not exposed. The CTE bodies read `main.events` and `main.sessions` because SQLite reports a circular reference when a CTE selects from its own name. Callers that need truncation fetch `SQL_FETCH_CAP` (1001) and return at most `SQL_ROW_CAP` (1000). `probeTruncation` is true when the wrapper fetched one extra row to detect that cap. A user `LIMIT` of 1000 or below is left unchanged.
+
 ## Cloudflare Workers
 
 ```js
