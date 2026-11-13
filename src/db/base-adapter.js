@@ -37,6 +37,7 @@ export function validatePropertyKey(key, usage = 'filter') {
 }
 
 const PROPERTY_GROUP_PREFIX = 'properties.';
+const PROPERTY_GROUP_KEY_MAX = 64;
 
 export function isPropertyGroupBy(value) {
   return typeof value === 'string' && value.startsWith(PROPERTY_GROUP_PREFIX);
@@ -56,7 +57,11 @@ export function assertQueryGroupBy(groupBy) {
   }
   for (const group of groupBy) {
     if (isPropertyGroupBy(group)) {
-      validatePropertyKey(group.slice(PROPERTY_GROUP_PREFIX.length), 'group-by');
+      const key = group.slice(PROPERTY_GROUP_PREFIX.length);
+      if (key.length > PROPERTY_GROUP_KEY_MAX) {
+        throw new AnalyticsError(ERROR_CODES.INVALID_PROPERTY_KEY, 'Invalid property group-by key', 400);
+      }
+      validatePropertyKey(key, 'group-by');
       continue;
     }
     if (!ALLOWED_GROUP_BY.includes(group)) {

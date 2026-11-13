@@ -74,6 +74,9 @@ const ALIAS_STOP = new Set([
   'RETURNING', 'SET', 'AND', 'OR',
 ]);
 
+const JOIN_MODIFIERS = new Set(['LEFT', 'RIGHT', 'FULL', 'INNER', 'CROSS', 'NATURAL', 'OUTER']);
+const SUBQUERY_START = new Set(['SELECT', 'WITH', 'VALUES']);
+
 function fail(error) {
   return { ok: false, error };
 }
@@ -226,6 +229,159 @@ function isName(token) {
   return token && (token.type === 'word' || token.type === 'quoted');
 }
 
+function isJoinStart(token) {
+  return Boolean(token && (token.upper === 'JOIN' || JOIN_MODIFIERS.has(token.upper)));
+}
+
+function isStatementStart(tokens, index) {
+  for (let i = 0; i < index; i += 1) {
+    const token = tokens[i];
+    if (token.type === 'word' || token.type === 'quoted' || token.type === 'number' || token.type === 'string') {
+      return false;
+    }
+  }
+  return true;
+}
+
+function parseParenthesizedFrom(tokens, ctes) {
+  const tables = [];
+  let i = 0;
+  const scope = ctes;
+
+  function peek() {
+    return tokens[i];
+  }
+
+  function readName() {
+    const token = peek();
+    if (!isName(token)) return null;
+    i += 1;
+    return token;
+  }
+
+  function takeInner() {
+    if (peek()?.text !== '(') return null;
+    const start = i + 1;
+    let depth = 0;
+    while (i < tokens.length) {
+      const token = tokens[i];
+      i += 1;
+      if (token.text === '(') depth += 1;
+      else if (token.text === ')') {
+        depth -= 1;
+        if (depth === 0) return tokens.slice(start, i - 1);
+      }
+    }
+    return null;
+  }
+
+  function absorb(result) {
+    if (!result || result.ok === false) return result || fail('missing table name');
+    tables.push(...result.tables);
+    return null;
+  }
+
+  function skipTableTail() {
+    const token = peek();
+    if (token?.upper === 'NOT' && tokens[i + 1]?.upper === 'INDEXED') {
+      i += 2;
+    } else if (token?.upper === 'INDEXED' && tokens[i + 1]?.upper === 'BY') {
+      i += 2;
+      if (!readName()) return fail('invalid INDEXED BY clause');
+    }
+
+    if (peek()?.upper === 'AS') {
+      i += 1;
+      if (!readName()) return fail('missing table alias');
+    } else if (isName(peek()) && !ALIAS_STOP.has(peek().upper)) {
+      i += 1;
+    }
+
+    if (peek()?.text === '(') return fail('table-valued functions are not allowed');
+    return null;
+  }
+
+  function parseFactor() {
+    const token = peek();
+    if (!token) return fail('missing table name');
+    if (token.text === '(') {
+      const inner = takeInner();
+      if (!inner) return fail('unterminated parenthesis');
+      const first = inner[0];
+      const nested = first && SUBQUERY_START.has(first.upper)
+        ? collectTableRefs(inner, scope)
+        : parseParenthesizedFrom(inner, scope);
+      const error = absorb(nested);
+      if (error) return error;
+      return skipTableTail();
+    }
+
+    if (!isName(token)) return fail('table reference is not allowed');
+    if (tokens[i + 1]?.text === '(') return fail('table-valued functions are not allowed');
+    const first = readName();
+    if (peek()?.text === '.') {
+      i += 1;
+      const second = readName();
+      if (!second) return fail('schema-qualified names are not allowed');
+      tables.push({ schema: first, name: second, dotted: true });
+      return skipTableTail();
+    }
+    if (scope.has(first.upper)) return skipTableTail();
+    if (!ALLOWED_TABLES.has(first.upper)) return fail(`table ${first.text} is not allowed`);
+    tables.push({ schema: null, name: first, dotted: false });
+    return skipTableTail();
+  }
+
+  function consumeOn() {
+    if (peek()?.upper === 'USING') {
+      i += 1;
+      const inner = takeInner();
+      if (!inner) return fail('invalid USING clause');
+      return absorb(collectTableRefs(inner, scope));
+    }
+    if (peek()?.upper !== 'ON') return null;
+    i += 1;
+    const expr = [];
+    let depth = 0;
+    while (i < tokens.length) {
+      const token = tokens[i];
+      if (depth === 0 && (token.text === ',' || isJoinStart(token))) break;
+      if (token.text === '(') depth += 1;
+      else if (token.text === ')') {
+        if (depth === 0) break;
+        depth -= 1;
+      }
+      expr.push(token);
+      i += 1;
+    }
+    if (depth !== 0) return fail('unterminated parenthesis');
+    return absorb(collectTableRefs(expr, scope));
+  }
+
+  const firstError = parseFactor();
+  if (firstError) return firstError;
+  while (i < tokens.length) {
+    if (peek()?.text === ',') {
+      i += 1;
+      const commaError = parseFactor();
+      if (commaError) return commaError;
+      continue;
+    }
+    if (isJoinStart(peek())) {
+      while (JOIN_MODIFIERS.has(peek()?.upper)) i += 1;
+      if (peek()?.upper !== 'JOIN') return fail('table reference is not allowed');
+      i += 1;
+      const joinError = parseFactor();
+      if (joinError) return joinError;
+      const onError = consumeOn();
+      if (onError) return onError;
+      continue;
+    }
+    return fail('table reference is not allowed');
+  }
+  return { tables };
+}
+
 function collectTableRefs(tokens, ctes = new Set()) {
   const tables = [];
   let i = 0;
@@ -257,15 +413,6 @@ function collectTableRefs(tokens, ctes = new Set()) {
     return false;
   }
 
-  function collectInsideParens() {
-    const start = i + 1;
-    if (!skipBalancedParens()) return fail('unterminated parenthesis');
-    const nested = collectTableRefs(tokens.slice(start, i - 1), scope);
-    if (nested.ok === false) return nested;
-    tables.push(...nested.tables);
-    return null;
-  }
-
   function skipTableTail() {
     const token = peek();
     if (token?.upper === 'NOT' && tokens[i + 1]?.upper === 'INDEXED') {
@@ -282,19 +429,23 @@ function collectTableRefs(tokens, ctes = new Set()) {
       i += 1;
     }
 
-    if (peek()?.text === '(') {
-      const nested = collectInsideParens();
-      if (nested) return nested;
-    }
+    if (peek()?.text === '(') return fail('table-valued functions are not allowed');
     return null;
   }
 
-  function parseTableFactor() {
+  function parseTableFactor(context) {
     const token = peek();
     if (!token) return fail('missing table name');
     if (token.text === '(') {
-      const nested = collectInsideParens();
-      if (nested) return nested;
+      const start = i + 1;
+      if (!skipBalancedParens()) return fail('unterminated parenthesis');
+      const inner = tokens.slice(start, i - 1);
+      const first = inner[0];
+      const nested = context === 'in' || (first && SUBQUERY_START.has(first.upper))
+        ? collectTableRefs(inner, scope)
+        : parseParenthesizedFrom(inner, scope);
+      if (nested.ok === false) return nested;
+      tables.push(...nested.tables);
       return skipTableTail();
     }
 
@@ -354,14 +505,14 @@ function collectTableRefs(tokens, ctes = new Set()) {
       continue;
     }
     if (token.upper === 'FROM' || token.upper === 'JOIN' || token.upper === 'IN') {
-      const fromList = token.upper === 'FROM';
+      const context = token.upper === 'IN' ? 'in' : 'from';
       i += 1;
-      const error = parseTableFactor();
+      const error = parseTableFactor(context);
       if (error) return error;
-      if (fromList) {
+      if (context === 'from' && token.upper === 'FROM') {
         while (peek()?.text === ',') {
           i += 1;
-          const commaError = parseTableFactor();
+          const commaError = parseTableFactor('from');
           if (commaError) return commaError;
         }
       }
@@ -391,7 +542,10 @@ function validateTokens(tokens) {
       return fail(`${token.text.toLowerCase()} is not allowed`);
     }
     if (token.type === 'word' && FORBIDDEN_KEYWORDS.has(token.upper)) {
-      return fail(`write keyword ${token.upper} is not allowed`);
+      const scalarReplace = token.upper === 'REPLACE'
+        && tokens[i + 1]?.text === '('
+        && !isStatementStart(tokens, i);
+      if (!scalarReplace) return fail(`write keyword ${token.upper} is not allowed`);
     }
     if (isName(token) && FORBIDDEN_IDENTIFIERS.has(token.upper)) {
       return fail(`${token.text.toLowerCase()} is not allowed`);

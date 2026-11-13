@@ -76,7 +76,12 @@ describe('validateReadOnlySql', () => {
   test('rejects write keywords outside strings, including comments, and allows them inside strings', () => {
     assert.match(rejected('SELECT id FROM events /* INSERT */'), /INSERT/);
     assert.match(rejected('SELECT id FROM events -- DELETE'), /DELETE/);
-    assert.match(rejected('SELECT REPLACE(event, \'a\', \'b\') FROM events'), /REPLACE/);
+    assert.equal(validateReadOnlySql("SELECT replace(event, 'a', 'b') FROM events").ok, true);
+    assert.equal(validateReadOnlySql("SELECT REPLACE(event, 'a', 'b') FROM events").ok, true);
+    assert.match(rejected('REPLACE INTO events (id) VALUES (1)'), /REPLACE/);
+    assert.match(rejected('INSERT OR REPLACE INTO events (id) VALUES (1)'), /INSERT|REPLACE/);
+    assert.match(rejected('SELECT replace FROM events'), /REPLACE/);
+    assert.match(rejected('SELECT id FROM events -- REPLACE'), /REPLACE/);
     assert.equal(validateReadOnlySql("SELECT id FROM events WHERE event = 'INSERT INTO events'").ok, true);
     assert.equal(validateReadOnlySql("SELECT id FROM events WHERE properties = 'main.events'").ok, true);
   });
@@ -132,7 +137,44 @@ describe('validateReadOnlySql', () => {
     assert.match(rejected(`SELECT 'x' WHERE ${tuple} IN pragma_table_info('events')`), /table-valued/);
     assert.match(rejected('SELECT * FROM json_each(properties)'), /table-valued/);
     assert.equal(validateReadOnlySql("SELECT id FROM events WHERE event IN ('click', 'page')").ok, true);
+    assert.equal(validateReadOnlySql('SELECT id FROM events WHERE id IN (user_id)').ok, true);
     assert.equal(validateReadOnlySql('SELECT id FROM events WHERE session_id IN (SELECT session_id FROM sessions)').ok, true);
+  });
+
+  test('rejects a bare table inside parentheses in a FROM position', () => {
+    const rejectedFrom = [
+      'SELECT * FROM (identity_map)',
+      'SELECT * FROM (user_profiles)',
+      'SELECT * FROM events a LEFT JOIN (identity_map) m ON m.canonical_id=a.user_id',
+      'SELECT * FROM (events), (identity_map)',
+      "SELECT * FROM (pragma_table_info('events'))",
+      "SELECT * FROM (json_each('[1,2]'))",
+      'SELECT * FROM (sqlite_master)',
+      'SELECT * FROM (events JOIN identity_map ON 1=1)',
+      'SELECT * FROM ( ( identity_map ) )',
+      'SELECT * FROM (\n\tidentity_map\n)',
+      'SELECT * FROM ( /* note */ identity_map )',
+      'SELECT * FROM ("identity_map")',
+      'SELECT * FROM ([identity_map])',
+      'SELECT * FROM (`identity_map`)',
+      'SELECT * FROM (((user_profiles))) p',
+    ];
+    for (const sql of rejectedFrom) {
+      assert.match(rejected(sql), /not allowed|only once|table-valued/);
+    }
+    assert.match(rejected('SELECT count(*) FROM ((events)) a, (events) b'), /only once/);
+    assert.match(rejected('SELECT count(*) FROM (events) a JOIN (events) b ON a.id=b.id'), /only once/);
+    assert.equal(validateReadOnlySql('SELECT id FROM (events)').ok, true);
+    assert.equal(validateReadOnlySql('SELECT id FROM (((events))) e').ok, true);
+    assert.equal(validateReadOnlySql('SELECT id FROM (events AS e)').ok, true);
+    assert.equal(validateReadOnlySql('SELECT id FROM ( events ) a').ok, true);
+    assert.equal(validateReadOnlySql('SELECT id FROM ( /* keep */ events )').ok, true);
+    assert.equal(validateReadOnlySql('SELECT events.id FROM (events) e JOIN (sessions) s ON e.session_id = s.session_id').ok, true);
+    assert.equal(validateReadOnlySql('SELECT id FROM (SELECT id FROM events)').ok, true);
+    assert.equal(validateReadOnlySql('SELECT * FROM (VALUES (1))').ok, true);
+
+    const wrapped = wrapProjectSql('SELECT id FROM (events)', 'mine', TEST_WINDOW);
+    assert.deepEqual(database().prepare(wrapped.sql).all(...wrapped.params).map((row) => row.id), ['2']);
   });
 });
 

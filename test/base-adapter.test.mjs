@@ -599,6 +599,28 @@ describe('BaseAdapter contract', () => {
       () => adapter.query({ project: 'p', group_by: ['properties.bad-key'] }),
       (err) => err.code === 'INVALID_PROPERTY_KEY' && err.message === 'Invalid property group-by key',
     );
+    await assert.rejects(
+      () => adapter.query({ project: 'p', group_by: [`properties.${'a'.repeat(65)}`] }),
+      (err) => err.code === 'INVALID_PROPERTY_KEY' && err.status === 400,
+    );
+    const key64 = 'a'.repeat(64);
+    await adapter.trackEvent({
+      project: 'p',
+      event: 'click',
+      user_id: 'u-key',
+      timestamp: Date.now(),
+      properties: { [key64]: 'yes' },
+    });
+    const grouped = await adapter.query({
+      project: 'p',
+      metrics: ['event_count'],
+      group_by: [`properties.${key64}`],
+    });
+    assert.equal(grouped.rows.some((row) => row[`properties.${key64}`] === 'yes'), true);
+    await assert.rejects(
+      () => adapter.query({ project: 'p', metrics: ['event_count'], count_mode: 'unique' }),
+      (err) => err.code === 'INVALID_COUNT_MODE' && err.status === 400,
+    );
   });
 
   // --- listProjects ---
