@@ -12,7 +12,8 @@
   "exports": {
     ".": "./src/index.js",
     "./ulid": "./src/ulid.js",
-    "./base-adapter": "./src/db/base-adapter.js"
+    "./base-adapter": "./src/db/base-adapter.js",
+    "./erasure": "./src/erasure.js"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

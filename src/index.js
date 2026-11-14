@@ -48,3 +48,14 @@ export {
   DEFAULT_SAMPLE_SIZE, MIN_SAMPLE_SIZE, MAX_SAMPLE_SIZE,
   DAY_NAMES, VALID_PAGE_TYPES, VALID_PERIODS,
 } from './constants.js'
+export {
+  ERASURE_BATCH_SIZE,
+  ERASURE_LARGE_EVENT_THRESHOLD,
+  emptyErasureCounts,
+  hashErasureSubject,
+  collectIdentityGraph,
+  countSubjectEvents,
+  userIdsForEmailLookup,
+  eraseSubjectRows,
+  reapplyErasureReceipt,
+} from './erasure.js'
